@@ -3,7 +3,6 @@ package ui
 import (
 	"bufio"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -114,6 +113,8 @@ func RunInteractiveMode() {
 			checkDependencies()
 		case "6":
 			discoverRsyncServers()
+		case "7":
+			manageConfiguration()
 		case "0":
 			fmt.Println("Au revoir !")
 			return
@@ -255,6 +256,10 @@ func configureBackup() {
 		}
 	}
 	
+	// Option pour une sauvegarde incrémentale
+	incrementalStr := readInput("Activer les sauvegardes incrémentales? (o/n): ")
+	incremental := strings.ToLower(incrementalStr) == "o"
+	
 	// Compression
 	compressStr := readInput("Activer la compression? (o/n): ")
 	compression := strings.ToLower(compressStr) == "o"
@@ -298,6 +303,7 @@ func configureBackup() {
 		ExcludeDirs:  excludeDirs,
 		ExcludeFiles: excludeFiles,
 		Interval:     interval,
+		IsIncremental: incremental, // Correction du nom du champ (de Incremental à IsIncremental)
 	}
 	
 	// Ajouter à la configuration
@@ -618,6 +624,16 @@ func clearScreen() {
 
 // displayHeader affiche l'en-tête de l'application
 func displayHeader() {
+	// Couleurs du rainbow flag pour la pride (6 couleurs exactement)
+	prideColors := []string{
+		"\033[38;5;196m", // Rouge (en haut)
+		"\033[38;5;208m", // Orange
+		"\033[38;5;226m", // Jaune
+		"\033[38;5;46m",  // Vert
+		"\033[38;5;27m",  // Bleu
+		"\033[38;5;129m", // Violet (en bas)
+	}
+
 	// Essayer de lire le fichier banner.txt
 	execPath, err := os.Executable()
 	var bannerPath string
@@ -637,18 +653,33 @@ func displayHeader() {
 	}
 
 	// Lire le fichier banner s'il existe
-	if bannerContent, err := ioutil.ReadFile(bannerPath); err == nil {
-		fmt.Printf("%s%s", colorBlue, colorBold)
-		fmt.Println(string(bannerContent))
-		fmt.Printf("%s\n", colorReset)
+	if bannerContent, err := os.ReadFile(bannerPath); err == nil {
+		// Convertir le contenu en string et le diviser en lignes
+		bannerLines := strings.Split(string(bannerContent), "\n")
+		
+		// Affichage avec couleurs du drapeau pride (1 couleur pour 2 lignes)
+		fmt.Print(colorBold) // Texte en gras
+		for i, line := range bannerLines {
+			if i < len(bannerLines) {
+				// Déterminer l'index de couleur (une couleur pour deux lignes)
+				colorIndex := i / 2
+				if colorIndex >= len(prideColors) {
+					colorIndex = len(prideColors) - 1
+				}
+				
+				// Afficher la ligne avec la couleur correspondante
+				fmt.Print(prideColors[colorIndex], line, "\n")
+			}
+		}
+		fmt.Print(colorReset) // Réinitialiser la couleur
 	} else {
-		// Fallback sur l'ASCII art codé en dur en cas d'échec
-		fmt.Printf("%s%s", colorBlue, colorBold)
+		// Bannière de secours si le fichier n'est pas trouvé
+		fmt.Print(colorBold)
 		fmt.Println("  ___ _ _  _               __  __  ___ ")
 		fmt.Println(" / __| | \\| |  ___  /\\ /\\ /__\\/__\\|_  )")
 		fmt.Println(" \\__ \\ | .` | / -_)/ _  //_\\ / \\/ / / / ")
 		fmt.Println(" |___/_|_|\\_| \\___|\\__,_/\\__/\\__//___| ")
-		fmt.Printf("%s\n", colorReset)
+		fmt.Print(colorReset)
 	}
 
 	fmt.Printf("%sSystème de Sauvegarde et Restauration Automatique%s\n\n", colorBold, colorReset)
@@ -662,6 +693,7 @@ func displayMainMenu() {
 	fmt.Printf("  %s4.%s Gérer les sauvegardes existantes\n", colorGreen, colorReset)
 	fmt.Printf("  %s5.%s Vérifier/installer les dépendances\n", colorGreen, colorReset)
 	fmt.Printf("  %s6.%s Rechercher des serveurs rsync sur le réseau\n", colorGreen, colorReset)
+	fmt.Printf("  %s7.%s Gérer la configuration\n", colorGreen, colorReset)
 	fmt.Printf("  %s0.%s Quitter\n", colorGreen, colorReset)
 	fmt.Println()
 }
@@ -1065,4 +1097,646 @@ func getDirSize(path string) (int64, error) {
 		return nil
 	})
 	return size, err
+}
+
+// manageConfiguration permet de gérer la configuration de l'application
+func manageConfiguration() {
+	for {
+		clearScreen()
+		fmt.Printf("%sGestion de la Configuration%s\n\n", colorBold, colorReset)
+		
+		fmt.Printf("  %s1.%s Afficher la configuration complète\n", colorGreen, colorReset)
+		fmt.Printf("  %s2.%s Modifier les répertoires sauvegardés\n", colorGreen, colorReset)
+		fmt.Printf("  %s3.%s Modifier/supprimer les serveurs rsync\n", colorGreen, colorReset)
+		fmt.Printf("  %s4.%s Modifier la politique de rétention\n", colorGreen, colorReset)
+		fmt.Printf("  %s5.%s Modifier la destination des sauvegardes\n", colorGreen, colorReset)
+		fmt.Printf("  %s0.%s Retour au menu principal\n", colorGreen, colorReset)
+		
+		choice := readInput("Votre choix: ")
+		
+		switch choice {
+		case "1":
+			displayFullConfig()
+		case "2":
+			manageBackupDirectories()
+		case "3":
+			manageRsyncServers()
+		case "4":
+			manageRetentionPolicy()
+		case "5":
+			changeBackupDestination()
+		case "0":
+			return
+		default:
+			fmt.Println("Option non valide. Veuillez réessayer.")
+		}
+		
+		readInput("Appuyez sur Entrée pour continuer...")
+	}
+}
+
+// displayFullConfig affiche la configuration complète de l'application
+func displayFullConfig() {
+	clearScreen()
+	fmt.Printf("%sConfiguration Complète de l'Application%s\n\n", colorBold, colorReset)
+	
+	// Afficher les informations générales
+	fmt.Printf("%sInformations générales:%s\n", colorBold, colorReset)
+	fmt.Printf("Destination des sauvegardes: %s\n", common.AppConfig.BackupDestination)
+	fmt.Printf("Dernière mise à jour: %s\n\n", common.AppConfig.LastUpdate.Format("02/01/2006 15:04:05"))
+	
+	// Afficher la politique de rétention
+	fmt.Printf("%sPolitique de rétention:%s\n", colorBold, colorReset)
+	fmt.Printf("Conservation quotidienne: %d jours\n", common.AppConfig.RetentionPolicy.KeepDaily)
+	fmt.Printf("Conservation hebdomadaire: %d semaines\n", common.AppConfig.RetentionPolicy.KeepWeekly)
+	fmt.Printf("Conservation mensuelle: %d mois\n\n", common.AppConfig.RetentionPolicy.KeepMonthly)
+	
+	// Afficher les répertoires sauvegardés
+	fmt.Printf("%sRépertoires sauvegardés:%s\n", colorBold, colorReset)
+	if len(common.AppConfig.BackupDirs) == 0 {
+		fmt.Printf("%sAucun répertoire configuré.%s\n\n", colorYellow, colorReset)
+	} else {
+		for i, dir := range common.AppConfig.BackupDirs {
+			fmt.Printf("%d. %s (%s)\n", i+1, dir.Name, dir.SourcePath)
+			fmt.Printf("   Compression: %v, Incrémental: %v, Intervalle: %d minutes\n", 
+				dir.Compression, dir.IsIncremental, dir.Interval)
+			
+			// Afficher les exclusions si présentes
+			if len(dir.ExcludeDirs) > 0 || len(dir.ExcludeFiles) > 0 {
+				fmt.Println("   Exclusions:")
+				
+				if len(dir.ExcludeDirs) > 0 {
+					fmt.Printf("   - Répertoires: %s\n", strings.Join(dir.ExcludeDirs, ", "))
+				}
+				
+				if len(dir.ExcludeFiles) > 0 {
+					fmt.Printf("   - Fichiers: %s\n", strings.Join(dir.ExcludeFiles, ", "))
+				}
+			}
+			
+			// Afficher le serveur distant si configuré
+			if dir.RemoteServer != nil {
+				fmt.Printf("   Serveur distant: %s (%s)\n", 
+					dir.RemoteServer.Name, dir.RemoteServer.IP)
+				if dir.RemoteServer.DefaultModule != "" {
+					fmt.Printf("   Module: %s\n", dir.RemoteServer.DefaultModule)
+				}
+			}
+			
+			fmt.Println()
+		}
+	}
+	
+	// Afficher les serveurs rsync
+	fmt.Printf("%sServeurs rsync configurés:%s\n", colorBold, colorReset)
+	if len(common.AppConfig.RsyncServers) == 0 {
+		fmt.Printf("%sAucun serveur rsync configuré.%s\n", colorYellow, colorReset)
+	} else {
+		for i, server := range common.AppConfig.RsyncServers {
+			fmt.Printf("%d. %s (%s)\n", i+1, server.Name, server.IP)
+			fmt.Printf("   Port: %d, Port SSH: %d, Utilisateur: %s\n", 
+				server.Port, server.SSHPort, server.Username)
+			
+			if len(server.Modules) > 0 {
+				fmt.Printf("   Modules disponibles: %s\n", strings.Join(server.Modules, ", "))
+				if server.DefaultModule != "" {
+					fmt.Printf("   Module par défaut: %s\n", server.DefaultModule)
+				}
+			}
+			
+			fmt.Println()
+		}
+	}
+}
+
+// manageBackupDirectories permet de gérer les répertoires à sauvegarder
+func manageBackupDirectories() {
+	for {
+		clearScreen()
+		fmt.Printf("%sGestion des répertoires sauvegardés%s\n\n", colorBold, colorReset)
+		
+		// Afficher les répertoires sauvegardés
+		if len(common.AppConfig.BackupDirs) == 0 {
+			fmt.Printf("%sAucun répertoire configuré.%s\n\n", colorYellow, colorReset)
+		} else {
+			fmt.Printf("%sRépertoires configurés:%s\n", colorBold, colorReset)
+			for i, dir := range common.AppConfig.BackupDirs {
+				fmt.Printf("%d. %s (%s)\n", i+1, dir.Name, dir.SourcePath)
+				incr := "Non"
+				if dir.IsIncremental {
+					incr = "Oui"
+				}
+				comp := "Non"
+				if dir.Compression {
+					comp = "Oui"
+				}
+				fmt.Printf("   Compression: %s, Incrémental: %s, Intervalle: %d min\n", 
+					comp, incr, dir.Interval)
+			}
+			fmt.Println()
+		}
+		
+		fmt.Printf("  %s1.%s Ajouter un répertoire\n", colorGreen, colorReset)
+		fmt.Printf("  %s2.%s Modifier un répertoire\n", colorGreen, colorReset)
+		fmt.Printf("  %s3.%s Supprimer un répertoire\n", colorGreen, colorReset)
+		fmt.Printf("  %s0.%s Retour\n\n", colorGreen, colorReset)
+		
+		choice := readInput("Votre choix: ")
+		
+		switch choice {
+		case "1":
+			configureBackup() // Utiliser la fonction existante
+			return
+		case "2":
+			editBackupDirectory()
+		case "3":
+			deleteBackupDirectory()
+		case "0":
+			return
+		default:
+			fmt.Println("Option non valide.")
+		}
+		
+		readInput("Appuyez sur Entrée pour continuer...")
+	}
+}
+
+// editBackupDirectory permet de modifier un répertoire de sauvegarde existant
+func editBackupDirectory() {
+	if len(common.AppConfig.BackupDirs) == 0 {
+		fmt.Printf("%sAucun répertoire à modifier.%s\n", colorYellow, colorReset)
+		return
+	}
+	
+	idxStr := readInput("Numéro du répertoire à modifier: ")
+	idx, err := strconv.Atoi(idxStr)
+	
+	if err != nil || idx < 1 || idx > len(common.AppConfig.BackupDirs) {
+		fmt.Printf("%sNuméro invalide.%s\n", colorRed, colorReset)
+		return
+	}
+	
+	// Récupérer la configuration à modifier
+	dir := common.AppConfig.BackupDirs[idx-1]
+	
+	fmt.Printf("%sModification de la configuration '%s'%s\n\n", colorBold, dir.Name, colorReset)
+	
+	// Permettre de modifier chaque propriété
+	fmt.Printf("Nom actuel: %s\n", dir.Name)
+	name := readInput("Nouveau nom (vide pour garder l'actuel): ")
+	if name == "" {
+		name = dir.Name
+	}
+	
+	fmt.Printf("Chemin actuel: %s\n", dir.SourcePath)
+	sourcePath := readInput("Nouveau chemin (vide pour garder l'actuel): ")
+	if sourcePath == "" {
+		sourcePath = dir.SourcePath
+	} else {
+		// Expandir les chemins relatifs, y compris ~/
+		if strings.HasPrefix(sourcePath, "~/") {
+			homeDir, err := os.UserHomeDir()
+			if err == nil {
+				sourcePath = filepath.Join(homeDir, sourcePath[2:])
+			}
+		}
+		
+		// Normaliser et vérifier le chemin
+		sourcePath = filepath.Clean(sourcePath)
+		if !common.DirExists(sourcePath) {
+			fmt.Printf("%sAttention: Le répertoire '%s' n'existe pas.%s\n", colorYellow, sourcePath, colorReset)
+			confirm := readInput("Continuer quand même? (o/n): ")
+			if strings.ToLower(confirm) != "o" {
+				return
+			}
+		}
+	}
+	
+	// Option pour une sauvegarde incrémentale
+	incStr := "n"
+	if dir.IsIncremental {
+		incStr = "o"
+	}
+	fmt.Printf("Sauvegarde incrémentale actuelle: %s\n", incStr)
+	incrementalStr := readInput("Activer les sauvegardes incrémentales? (o/n, vide pour garder l'actuel): ")
+	incremental := dir.IsIncremental
+	if incrementalStr != "" {
+		incremental = strings.ToLower(incrementalStr) == "o"
+	}
+	
+	// Compression
+	compStr := "n"
+	if dir.Compression {
+		compStr = "o"
+	}
+	fmt.Printf("Compression actuelle: %s\n", compStr)
+	compressStr := readInput("Activer la compression? (o/n, vide pour garder l'actuel): ")
+	compression := dir.Compression
+	if compressStr != "" {
+		compression = strings.ToLower(compressStr) == "o"
+	}
+	
+	// Répertoires à exclure
+	fmt.Printf("Répertoires exclus actuels: %s\n", strings.Join(dir.ExcludeDirs, ", "))
+	excludeDirsStr := readInput("Nouveaux répertoires à exclure (séparés par des virgules, vide pour garder les actuels): ")
+	excludeDirs := dir.ExcludeDirs
+	if excludeDirsStr != "" {
+		excludeDirs = strings.Split(excludeDirsStr, ",")
+		for i := range excludeDirs {
+			excludeDirs[i] = strings.TrimSpace(excludeDirs[i])
+		}
+	}
+	
+	// Fichiers à exclure
+	fmt.Printf("Fichiers exclus actuels: %s\n", strings.Join(dir.ExcludeFiles, ", "))
+	excludeFilesStr := readInput("Nouveaux fichiers à exclure (séparés par des virgules, vide pour garder les actuels): ")
+	excludeFiles := dir.ExcludeFiles
+	if excludeFilesStr != "" {
+		excludeFiles = strings.Split(excludeFilesStr, ",")
+		for i := range excludeFiles {
+			excludeFiles[i] = strings.TrimSpace(excludeFiles[i])
+		}
+	}
+	
+	// Intervalle
+	fmt.Printf("Intervalle actuel: %d minutes\n", dir.Interval)
+	intervalStr := readInput("Nouvel intervalle en minutes (vide pour garder l'actuel): ")
+	interval := dir.Interval
+	if intervalStr != "" {
+		if i, err := strconv.Atoi(intervalStr); err == nil && i >= 0 {
+			interval = i
+		}
+	}
+	
+	// Créer la configuration modifiée
+	updatedConfig := common.BackupConfig{
+		Name:          name,
+		SourcePath:    sourcePath,
+		Compression:   compression,
+		IsIncremental: incremental,
+		ExcludeDirs:   excludeDirs,
+		ExcludeFiles:  excludeFiles,
+		Interval:      interval,
+		RemoteServer:  dir.RemoteServer, // Conserver le serveur distant s'il existe
+	}
+	
+	// Mettre à jour la configuration
+	common.AppConfig.BackupDirs[idx-1] = updatedConfig
+	
+	if err := common.SaveConfig(common.AppConfig); err != nil {
+		fmt.Printf("%sErreur lors de la mise à jour de la configuration: %v%s\n", colorRed, err, colorReset)
+		return
+	}
+	
+	fmt.Printf("%sConfiguration '%s' modifiée avec succès.%s\n", colorGreen, name, colorReset)
+}
+
+// deleteBackupDirectory permet de supprimer un répertoire de sauvegarde
+func deleteBackupDirectory() {
+	if len(common.AppConfig.BackupDirs) == 0 {
+		fmt.Printf("%sAucun répertoire à supprimer.%s\n", colorYellow, colorReset)
+		return
+	}
+	
+	idxStr := readInput("Numéro du répertoire à supprimer: ")
+	idx, err := strconv.Atoi(idxStr)
+	
+	if err != nil || idx < 1 || idx > len(common.AppConfig.BackupDirs) {
+		fmt.Printf("%sNuméro invalide.%s\n", colorRed, colorReset)
+		return
+	}
+	
+	// Récupérer le nom pour confirmation
+	name := common.AppConfig.BackupDirs[idx-1].Name
+	
+	confirm := readInput(fmt.Sprintf("Êtes-vous sûr de vouloir supprimer la configuration '%s'? (o/n): ", name))
+	if strings.ToLower(confirm) != "o" {
+		fmt.Println("Suppression annulée.")
+		return
+	}
+	
+	// Supprimer l'élément
+	common.AppConfig.BackupDirs = append(
+		common.AppConfig.BackupDirs[:idx-1], 
+		common.AppConfig.BackupDirs[idx:]...
+	)
+	
+	if err := common.SaveConfig(common.AppConfig); err != nil {
+		fmt.Printf("%sErreur lors de la mise à jour de la configuration: %v%s\n", colorRed, err, colorReset)
+		return
+	}
+	
+	fmt.Printf("%sConfiguration '%s' supprimée avec succès.%s\n", colorGreen, name, colorReset)
+}
+
+// manageRsyncServers permet de gérer les serveurs rsync configurés
+func manageRsyncServers() {
+	for {
+		clearScreen()
+		fmt.Printf("%sGestion des serveurs rsync%s\n\n", colorBold, colorReset)
+		
+		// Afficher les serveurs configurés
+		if len(common.AppConfig.RsyncServers) == 0 {
+			fmt.Printf("%sAucun serveur rsync configuré.%s\n\n", colorYellow, colorReset)
+		} else {
+			fmt.Printf("%sServeurs configurés:%s\n", colorBold, colorReset)
+			for i, server := range common.AppConfig.RsyncServers {
+				fmt.Printf("%d. %s (%s)\n", i+1, server.Name, server.IP)
+				fmt.Printf("   Utilisateur: %s, Port SSH: %d\n", server.Username, server.SSHPort)
+				if len(server.Modules) > 0 {
+					fmt.Printf("   Modules: %s\n", strings.Join(server.Modules, ", "))
+				}
+			}
+			fmt.Println()
+		}
+		
+		fmt.Printf("  %s1.%s Rechercher et ajouter un serveur\n", colorGreen, colorReset)
+		fmt.Printf("  %s2.%s Modifier un serveur\n", colorGreen, colorReset)
+		fmt.Printf("  %s3.%s Supprimer un serveur\n", colorGreen, colorReset)
+		fmt.Printf("  %s0.%s Retour\n\n", colorGreen, colorReset)
+		
+		choice := readInput("Votre choix: ")
+		
+		switch choice {
+		case "1":
+			discoverRsyncServers() // Utiliser la fonction existante
+			return
+		case "2":
+			editRsyncServer()
+		case "3":
+			deleteRsyncServer()
+		case "0":
+			return
+		default:
+			fmt.Println("Option non valide.")
+		}
+		
+		readInput("Appuyez sur Entrée pour continuer...")
+	}
+}
+
+// editRsyncServer permet de modifier un serveur rsync existant
+func editRsyncServer() {
+	if len(common.AppConfig.RsyncServers) == 0 {
+		fmt.Printf("%sAucun serveur à modifier.%s\n", colorYellow, colorReset)
+		return
+	}
+	
+	idxStr := readInput("Numéro du serveur à modifier: ")
+	idx, err := strconv.Atoi(idxStr)
+	
+	if err != nil || idx < 1 || idx > len(common.AppConfig.RsyncServers) {
+		fmt.Printf("%sNuméro invalide.%s\n", colorRed, colorReset)
+		return
+	}
+	
+	// Récupérer la configuration à modifier
+	server := common.AppConfig.RsyncServers[idx-1]
+	
+	fmt.Printf("%sModification du serveur '%s'%s\n\n", colorBold, server.Name, colorReset)
+	
+	// Permettre de modifier chaque propriété
+	fmt.Printf("Nom actuel: %s\n", server.Name)
+	name := readInput("Nouveau nom (vide pour garder l'actuel): ")
+	if name == "" {
+		name = server.Name
+	}
+	
+	fmt.Printf("Adresse IP actuelle: %s\n", server.IP)
+	ip := readInput("Nouvelle adresse IP (vide pour garder l'actuelle): ")
+	if ip == "" {
+		ip = server.IP
+	}
+	
+	fmt.Printf("Nom d'utilisateur actuel: %s\n", server.Username)
+	username := readInput("Nouveau nom d'utilisateur (vide pour garder l'actuel): ")
+	if username == "" {
+		username = server.Username
+	}
+	
+	fmt.Printf("Port SSH actuel: %d\n", server.SSHPort)
+	sshPortStr := readInput("Nouveau port SSH (vide pour garder l'actuel): ")
+	sshPort := server.SSHPort
+	if sshPortStr != "" {
+		if port, err := strconv.Atoi(sshPortStr); err == nil && port > 0 {
+			sshPort = port
+		}
+	}
+	
+	// Si des modules sont disponibles, permettre de modifier le module par défaut
+	defaultModule := server.DefaultModule
+	if len(server.Modules) > 0 {
+		fmt.Printf("Modules disponibles: %s\n", strings.Join(server.Modules, ", "))
+		fmt.Printf("Module par défaut actuel: %s\n", defaultModule)
+		
+		fmt.Println("\nVoulez-vous changer le module par défaut?")
+		for i, module := range server.Modules {
+			fmt.Printf("%d. %s\n", i+1, module)
+		}
+		fmt.Printf("0. Aucun module par défaut\n")
+		
+		moduleChoice := readInput("\nChoisissez un module (vide pour garder l'actuel): ")
+		
+		if moduleChoice != "" {
+			if moduleIdx, err := strconv.Atoi(moduleChoice); err == nil {
+				if moduleIdx == 0 {
+					defaultModule = ""
+				} else if moduleIdx > 0 && moduleIdx <= len(server.Modules) {
+					defaultModule = server.Modules[moduleIdx-1]
+				}
+			}
+		}
+	}
+	
+	// Créer la configuration modifiée
+	updatedServer := common.RsyncServerConfig{
+		Name:          name,
+		IP:            ip,
+		Port:          server.Port, // Garder le port d'origine
+		SSHPort:       sshPort,
+		Username:      username,
+		Modules:       server.Modules, // Garder les modules d'origine
+		DefaultModule: defaultModule,
+	}
+	
+	// Mettre à jour la configuration
+	common.AppConfig.RsyncServers[idx-1] = updatedServer
+	
+	// Mettre à jour également les références dans les configurations de sauvegarde
+	for i, dir := range common.AppConfig.BackupDirs {
+		if dir.RemoteServer != nil && dir.RemoteServer.Name == server.Name {
+			common.AppConfig.BackupDirs[i].RemoteServer = &updatedServer
+		}
+	}
+	
+	if err := common.SaveConfig(common.AppConfig); err != nil {
+		fmt.Printf("%sErreur lors de la mise à jour de la configuration: %v%s\n", colorRed, err, colorReset)
+		return
+	}
+	
+	fmt.Printf("%sServeur '%s' modifié avec succès.%s\n", colorGreen, name, colorReset)
+}
+
+// deleteRsyncServer permet de supprimer un serveur rsync
+func deleteRsyncServer() {
+	if len(common.AppConfig.RsyncServers) == 0 {
+		fmt.Printf("%sAucun serveur à supprimer.%s\n", colorYellow, colorReset)
+		return
+	}
+	
+	idxStr := readInput("Numéro du serveur à supprimer: ")
+	idx, err := strconv.Atoi(idxStr)
+	
+	if err != nil || idx < 1 || idx > len(common.AppConfig.RsyncServers) {
+		fmt.Printf("%sNuméro invalide.%s\n", colorRed, colorReset)
+		return
+	}
+	
+	// Récupérer le serveur pour vérifier les dépendances
+	server := common.AppConfig.RsyncServers[idx-1]
+	
+	// Vérifier si le serveur est utilisé par des configurations de sauvegarde
+	var usedBy []string
+	for _, dir := range common.AppConfig.BackupDirs {
+		if dir.RemoteServer != nil && dir.RemoteServer.Name == server.Name {
+			usedBy = append(usedBy, dir.Name)
+		}
+	}
+	
+	if len(usedBy) > 0 {
+		fmt.Printf("%sAttention: Ce serveur est utilisé par les configurations suivantes:%s\n", 
+			colorYellow, colorReset)
+		for _, name := range usedBy {
+			fmt.Printf("- %s\n", name)
+		}
+		fmt.Println("La suppression du serveur affectera ces configurations.")
+	}
+	
+	confirm := readInput(fmt.Sprintf("Êtes-vous sûr de vouloir supprimer le serveur '%s'? (o/n): ", server.Name))
+	if strings.ToLower(confirm) != "o" {
+		fmt.Println("Suppression annulée.")
+		return
+	}
+	
+	// Supprimer l'élément
+	common.AppConfig.RsyncServers = append(
+		common.AppConfig.RsyncServers[:idx-1], 
+		common.AppConfig.RsyncServers[idx:]...
+	)
+	
+	// Mettre à jour les références dans les configurations de sauvegarde
+	for i, dir := range common.AppConfig.BackupDirs {
+		if dir.RemoteServer != nil && dir.RemoteServer.Name == server.Name {
+			common.AppConfig.BackupDirs[i].RemoteServer = nil
+		}
+	}
+	
+	if err := common.SaveConfig(common.AppConfig); err != nil {
+		fmt.Printf("%sErreur lors de la mise à jour de la configuration: %v%s\n", colorRed, err, colorReset)
+		return
+	}
+	
+	fmt.Printf("%sServeur '%s' supprimé avec succès.%s\n", colorGreen, server.Name, colorReset)
+}
+
+// manageRetentionPolicy permet de modifier la politique de rétention
+func manageRetentionPolicy() {
+	clearScreen()
+	fmt.Printf("%sConfiguration de la politique de rétention%s\n\n", colorBold, colorReset)
+	
+	policy := common.AppConfig.RetentionPolicy
+	
+	fmt.Printf("Politique actuelle:\n")
+	fmt.Printf("- Conservation quotidienne: %d jours\n", policy.KeepDaily)
+	fmt.Printf("- Conservation hebdomadaire: %d semaines\n", policy.KeepWeekly)
+	fmt.Printf("- Conservation mensuelle: %d mois\n\n", policy.KeepMonthly)
+	
+	// Permettre de modifier chaque valeur
+	keepDailyStr := readInput(fmt.Sprintf("Nombre de sauvegardes quotidiennes à conserver (actuel: %d): ", policy.KeepDaily))
+	keepDaily := policy.KeepDaily
+	if keepDailyStr != "" {
+		if days, err := strconv.Atoi(keepDailyStr); err == nil && days >= 0 {
+			keepDaily = days
+		}
+	}
+	
+	keepWeeklyStr := readInput(fmt.Sprintf("Nombre de sauvegardes hebdomadaires à conserver (actuel: %d): ", policy.KeepWeekly))
+	keepWeekly := policy.KeepWeekly
+	if keepWeeklyStr != "" {
+		if weeks, err := strconv.Atoi(keepWeeklyStr); err == nil && weeks >= 0 {
+			keepWeekly = weeks
+		}
+	}
+	
+	keepMonthlyStr := readInput(fmt.Sprintf("Nombre de sauvegardes mensuelles à conserver (actuel: %d): ", policy.KeepMonthly))
+	keepMonthly := policy.KeepMonthly
+	if keepMonthlyStr != "" {
+		if months, err := strconv.Atoi(keepMonthlyStr); err == nil && months >= 0 {
+			keepMonthly = months
+		}
+	}
+	
+	// Mettre à jour la politique
+	common.AppConfig.RetentionPolicy = common.RetentionPolicy{
+		KeepDaily:   keepDaily,
+		KeepWeekly:  keepWeekly,
+		KeepMonthly: keepMonthly,
+	}
+	
+	if err := common.SaveConfig(common.AppConfig); err != nil {
+		fmt.Printf("%sErreur lors de la mise à jour de la configuration: %v%s\n", colorRed, err, colorReset)
+		return
+	}
+	
+	fmt.Printf("%sPolitique de rétention mise à jour avec succès.%s\n", colorGreen, colorReset)
+}
+
+// changeBackupDestination permet de modifier la destination des sauvegardes
+func changeBackupDestination() {
+	clearScreen()
+	fmt.Printf("%sModification de la destination des sauvegardes%s\n\n", colorBold, colorReset)
+	
+	fmt.Printf("Destination actuelle: %s\n\n", common.AppConfig.BackupDestination)
+	
+	// Demander la nouvelle destination
+	newDest := readInput("Nouvelle destination (vide pour annuler): ")
+	if newDest == "" {
+		fmt.Println("Modification annulée.")
+		return
+	}
+	
+	// Expandir les chemins relatifs, y compris ~/
+	if strings.HasPrefix(newDest, "~/") {
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			newDest = filepath.Join(homeDir, newDest[2:])
+		}
+	}
+	
+	// Normaliser le chemin
+	newDest = filepath.Clean(newDest)
+	
+	// Vérifier/créer le répertoire de destination
+	if !common.DirExists(newDest) {
+		createDest := readInput("Le répertoire n'existe pas. Voulez-vous le créer? (o/n): ")
+		if strings.ToLower(createDest) == "o" {
+			if err := os.MkdirAll(newDest, 0755); err != nil {
+				fmt.Printf("%sErreur lors de la création du répertoire: %v%s\n", colorRed, err, colorReset)
+				return
+			}
+		} else {
+			fmt.Println("Modification annulée.")
+			return
+		}
+	}
+	
+	// Mettre à jour la destination
+	common.AppConfig.BackupDestination = newDest
+	
+	if err := common.SaveConfig(common.AppConfig); err != nil {
+		fmt.Printf("%sErreur lors de la mise à jour de la configuration: %v%s\n", colorRed, err, colorReset)
+		return
+	}
+	
+	fmt.Printf("%sDestination des sauvegardes mise à jour avec succès.%s\n", colorGreen, colorReset)
 }
