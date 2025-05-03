@@ -222,7 +222,7 @@ func (w *Watcher) performBackup() error {
 		Compression:  w.Config.Compression,
 		ExcludeDirs:  w.Config.ExcludeDirs,
 		ExcludeFiles: w.Config.ExcludeFiles,
-		Incremental:  true,
+		Incremental:  true, // Forcer les sauvegardes incrémentales pour la surveillance automatique
 	}
 	
 	err := backup.CreateBackup(backupConfig)
