@@ -19,13 +19,14 @@ type Config struct {
 
 // BackupConfig contient la configuration pour un répertoire à sauvegarder
 type BackupConfig struct {
-	SourcePath   string   `json:"sourcePath"`
-	Name         string   `json:"name"`
-	Compression  bool     `json:"compression"`
-	ExcludeDirs  []string `json:"excludeDirs,omitempty"`
-	ExcludeFiles []string `json:"excludeFiles,omitempty"`
-	Interval     int      `json:"interval"` // en minutes, 0 pour désactiver
-	RemoteServer *RsyncServerConfig `json:"remoteServer,omitempty"` // Serveur rsync distant
+	SourcePath    string   `json:"sourcePath"`
+	Name          string   `json:"name"`
+	Compression   bool     `json:"compression"`
+	IsIncremental bool     `json:"isIncremental"` // Indique si la sauvegarde doit être incrémentale
+	ExcludeDirs   []string `json:"excludeDirs,omitempty"`
+	ExcludeFiles  []string `json:"excludeFiles,omitempty"`
+	Interval      int      `json:"interval"` // en minutes, 0 pour désactiver
+	RemoteServer  *RsyncServerConfig `json:"remoteServer,omitempty"` // Serveur rsync distant
 }
 
 // RetentionPolicy définit combien de temps les sauvegardes sont conservées
