@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Noziop/s4v3my4ss/pkg/common"
 )
@@ -162,16 +164,116 @@ func RsyncBackup(source, destination string, excludeDirs, excludeFiles []string,
 		excludes = append(excludes, file)
 	}
 
+	// Générer un horodatage unique pour cette sauvegarde
+	timestamp := fmt.Sprintf("%s", strings.Replace(
+		strings.Replace(
+			strings.Replace(
+				time.Now().Format("2006-01-02 15:04:05"), 
+				" ", "_", -1), 
+			":", "-", -1), 
+		"+", "", -1))
+
+	// Construire le chemin de destination final avec timestamp pour éviter d'écraser les sauvegardes existantes
+	finalDestination := destination
+	var lastBackupPath string
+	var isIncremental bool
+
+	// Si on utilise un serveur distant, préparer des chemins spécifiques
+	if remoteServer != nil {
+		// Extraire le nom du répertoire source pour l'utiliser comme base du nom du répertoire de sauvegarde
+		sourceBaseName := filepath.Base(strings.TrimSuffix(source, "/"))
+		
+		// Construire le chemin de destination sur le serveur distant incluant le timestamp
+		// Format pour destination distante avec module rsync
+		if remoteServer.DefaultModule != "" {
+			// Format: module/sourceBaseName/YYYY_MM_DD_HH-MM-SS/
+			finalDestination = fmt.Sprintf("%s::%s/%s/%s/", 
+				remoteServer.IP,
+				remoteServer.DefaultModule,
+				sourceBaseName,
+				timestamp)
+			
+			if remoteServer.Username != "" {
+				finalDestination = fmt.Sprintf("%s@%s", remoteServer.Username, finalDestination)
+			}
+		} else {
+			// Format pour destination SSH: user@host:path/sourceBaseName/YYYY_MM_DD_HH-MM-SS/
+			finalDestination = fmt.Sprintf("%s@%s:%s/%s/",
+				remoteServer.Username,
+				remoteServer.IP,
+				sourceBaseName,
+				timestamp)
+		}
+
+		// Chercher la dernière sauvegarde pour créer une sauvegarde incrémentale
+		backups, err := common.ListBackups()
+		if err == nil {
+			var lastBackup *common.BackupInfo
+			for i := range backups {
+				b := &backups[i]
+				// Vérifier si c'est une sauvegarde du même répertoire source vers le même serveur distant
+				if b.SourcePath == source && 
+					b.RemoteServer != nil && 
+					b.RemoteServer.IP == remoteServer.IP {
+						if lastBackup == nil || b.Time.After(lastBackup.Time) {
+							lastBackup = b
+						}
+				}
+			}
+
+			if lastBackup != nil {
+				// Utiliser le chemin de la dernière sauvegarde pour link-dest
+				lastBackupPath = lastBackup.BackupPath
+				isIncremental = true
+				fmt.Printf("Sauvegarde incrémentale basée sur: %s\n", lastBackupPath)
+			} else {
+				fmt.Println("Aucune sauvegarde précédente trouvée. Création d'une sauvegarde complète.")
+			}
+		}
+	} else {
+		// Pour les sauvegardes locales, créer un sous-répertoire avec timestamp
+		finalDestination = filepath.Join(destination, timestamp)
+		
+		// Vérifier s'il existe déjà des sauvegardes pour ce répertoire
+		backups, err := common.ListBackups()
+		if err == nil {
+			var lastBackup *common.BackupInfo
+			for i := range backups {
+				b := &backups[i]
+				// Vérifier si c'est une sauvegarde du même répertoire source
+				if b.SourcePath == source && b.RemoteServer == nil {
+					if lastBackup == nil || b.Time.After(lastBackup.Time) {
+						lastBackup = b
+					}
+				}
+			}
+
+			if lastBackup != nil {
+				// Utiliser le chemin de la dernière sauvegarde pour link-dest
+				lastBackupPath = lastBackup.BackupPath
+				isIncremental = true
+				fmt.Printf("Sauvegarde incrémentale basée sur: %s\n", lastBackupPath)
+			} else {
+				fmt.Println("Aucune sauvegarde précédente trouvée. Création d'une sauvegarde complète.")
+			}
+		}
+	}
+
 	// Préparer les options
 	options := RsyncOptions{
 		Source:      source,
-		Destination: destination,
+		Destination: finalDestination,
 		Exclude:     excludes,
 		Delete:      true,
 		Archive:     true,
 		Compression: compression,
 		Progress:    true,
-		Incremental: true, // Activer par défaut les sauvegardes incrémentales
+	}
+
+	// Configurer pour sauvegarde incrémentale si possible
+	if isIncremental && lastBackupPath != "" {
+		options.Incremental = true
+		options.LinkDest = lastBackupPath
 	}
 
 	// Si on utilise un serveur distant
@@ -180,57 +282,23 @@ func RsyncBackup(source, destination string, excludeDirs, excludeFiles []string,
 		options.SSHPort = remoteServer.SSHPort
 		options.Username = remoteServer.Username
 		options.Module = remoteServer.DefaultModule
-		options.Destination = remoteServer.IP
+	}
 
-		// Trouver la dernière sauvegarde pour le même chemin source
-		// pour configurer le link-dest pour une sauvegarde incrémentale
-		backups, err := common.ListBackups()
-		if err == nil {
-			var lastBackup *common.BackupInfo
-			for i := range backups {
-				b := &backups[i]
-				// Vérifier si c'est une sauvegarde du même répertoire source
-				// et vers le même serveur distant
-				if b.SourcePath == source && 
-				   b.RemoteServer != nil && 
-				   b.RemoteServer.IP == remoteServer.IP {
-					if lastBackup == nil || b.Time.After(lastBackup.Time) {
-						lastBackup = b
-					}
-				}
-			}
-
-			// Si une sauvegarde précédente a été trouvée, configurer link-dest
-			if lastBackup != nil {
-				// Construire le chemin de la dernière sauvegarde
-				// Format: rsync://user@host/module/path
-				var linkDestPath string
-				if remoteServer.DefaultModule != "" {
-					// Avec module
-					linkDestPath = fmt.Sprintf("rsync://%s@%s/%s/previous", 
-						remoteServer.Username, 
-						remoteServer.IP,
-						remoteServer.DefaultModule)
-				} else {
-					// Sans module (avec SSH)
-					linkDestPath = fmt.Sprintf("%s@%s:previous", 
-						remoteServer.Username, 
-						remoteServer.IP)
-				}
-				
-				options.LinkDest = linkDestPath
-				fmt.Printf("Mode sauvegarde incrémentale activé. Référence: %s\n", linkDestPath)
-			} else {
-				fmt.Println("Aucune sauvegarde précédente trouvée. Création d'une sauvegarde complète.")
-			}
+	// Créer le répertoire de destination si c'est local
+	if remoteServer == nil {
+		if err := os.MkdirAll(finalDestination, 0755); err != nil {
+			return fmt.Errorf("impossible de créer le répertoire de destination: %v", err)
 		}
 	}
 
 	// Exécuter rsync
+	fmt.Printf("Sauvegarde de %s vers %s...\n", source, finalDestination)
 	if err := ExecuteRsync(options); err != nil {
 		return fmt.Errorf("erreur rsync: %v", err)
 	}
 
+	// Retourner le chemin de destination final pour l'enregistrement des métadonnées
+	destination = finalDestination
 	return nil
 }
 
