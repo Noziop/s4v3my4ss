@@ -73,74 +73,119 @@ type RsyncOptions struct {
 	Progress    bool
 	Remote      bool
 	SSHPort     int
+	RsyncPort   int      // Port pour le démon rsync (par défaut 873)
 	Username    string
+	Hostname    string   // Ajout du champ Hostname manquant
 	Module      string
 	Incremental bool   // Ajout pour sauvegardes incrémentales
 	LinkDest    string // Chemin vers la sauvegarde précédente
 }
 
-// Execute exécute une commande rsync avec les options fournies
+// ExecuteRsync exécute une commande rsync avec les options spécifiées
 func ExecuteRsync(options RsyncOptions) error {
-	// Vérifier que rsync est installé
-	if _, err := exec.LookPath("rsync"); err != nil {
-		return fmt.Errorf("rsync n'est pas installé: %v", err)
+	// Définir les ports à essayer dans l'ordre
+	portsToTry := []int{}
+	
+	// Si un port spécifique est fourni, commencer par celui-là
+	if options.Remote && options.Module != "" && options.RsyncPort > 0 {
+		portsToTry = append(portsToTry, options.RsyncPort)
 	}
-
-	// Construire les arguments de la commande rsync
-	args := []string{}
-
-	// Options communes
-	if options.Archive {
-		args = append(args, "--archive")
-	}
-	if options.Compression {
-		args = append(args, "--compress")
-	}
-	if options.Progress {
-		args = append(args, "--progress")
-	}
-	if options.Delete {
-		args = append(args, "--delete")
-	}
-
-	// Option pour sauvegarde incrémentale
-	if options.Incremental && options.LinkDest != "" {
-		args = append(args, "--link-dest="+options.LinkDest)
-	}
-
-	// Gérer les exclusions
-	for _, exclude := range options.Exclude {
-		args = append(args, "--exclude", exclude)
-	}
-
-	// Options pour connexion distante
-	if options.Remote && options.SSHPort > 0 {
-		args = append(args, "-e", fmt.Sprintf("ssh -p %d", options.SSHPort))
-	}
-
-	// Source et destination
-	src := options.Source
-	dest := options.Destination
-
-	// Si c'est une destination distante mais pas formatée comme telle
-	if options.Remote && !strings.Contains(dest, ":") {
-		// Format pour destination distante avec module
-		if options.Module != "" {
-			dest = fmt.Sprintf("%s@%s::%s", options.Username, dest, options.Module)
-		} else {
-			// Format pour destination distante sans module (avec SSH)
-			dest = fmt.Sprintf("%s@%s:", options.Username, dest)
+	
+	// Ajouter les ports standard dans l'ordre de priorité
+	portsToTry = append(portsToTry, 873, 22, 2224)
+	
+	// Éliminer les doublons si le port spécifié est déjà dans la liste
+	uniquePorts := []int{}
+	seen := make(map[int]bool)
+	for _, port := range portsToTry {
+		if !seen[port] {
+			seen[port] = true
+			uniquePorts = append(uniquePorts, port)
 		}
 	}
-
-	args = append(args, src, dest)
-
-	// Exécuter la commande
-	cmd := exec.Command("rsync", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	return cmd.Run()
+	portsToTry = uniquePorts
+	
+	var lastError error
+	
+	// Essayer chaque port jusqu'à ce qu'un fonctionne
+	for _, port := range portsToTry {
+		args := []string{}
+		
+		// Options standard
+		if options.Archive {
+			args = append(args, "-a")
+		}
+		
+		if options.Delete {
+			args = append(args, "--delete")
+		}
+		
+		if options.Compression {
+			args = append(args, "-z")
+		}
+		
+		if options.Progress {
+			args = append(args, "--progress", "--stats")
+		}
+		
+		// Exclusions
+		for _, exclude := range options.Exclude {
+			args = append(args, "--exclude="+exclude)
+		}
+		
+		// Pour les sauvegardes incrémentales
+		if options.Incremental && options.LinkDest != "" {
+			// Adapter le chemin link-dest pour un serveur distant
+			linkDestPath := options.LinkDest
+			if options.Remote && options.Module == "" {
+				// Si c'est une connexion SSH, on doit adapter le chemin link-dest
+				linkDestPath = fmt.Sprintf("%s@%s:%s", options.Username, options.Hostname, options.LinkDest)
+			}
+			args = append(args, fmt.Sprintf("--link-dest=%s", linkDestPath))
+		}
+		
+		// Configuration SSH pour les serveurs distants
+		if options.Remote {
+			if options.Module == "" {
+				// C'est une connexion SSH
+				// Utiliser l'option -F /dev/null pour ignorer ~/.ssh/config et éviter l'erreur UseKeychain
+				args = append(args, "-e", "ssh -F /dev/null")
+			} else {
+				// C'est une connexion au module rsync
+				// Utiliser le port courant de l'itération
+				args = append(args, fmt.Sprintf("--port=%d", port))
+			}
+		}
+		
+		// Ajouter source et destination
+		args = append(args, options.Source)
+		args = append(args, options.Destination)
+		
+		// Construire la commande complète
+		cmd := exec.Command("rsync", args...)
+		
+		// Configurer la sortie en temps réel
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		
+		// Exécuter la commande
+		fmt.Printf("Essai de connexion rsync sur le port %d\n", port)
+		fmt.Printf("Exécution de: rsync %s\n", strings.Join(args, " "))
+		
+		err := cmd.Run()
+		if err == nil {
+			// La commande a réussi, on sort de la boucle
+			fmt.Printf("Connexion réussie sur le port %d\n", port)
+			return nil
+		}
+		
+		// Sinon, on enregistre l'erreur et on essaie le port suivant
+		lastError = err
+		fmt.Printf("Échec de connexion sur le port %d: %v. Essai du port suivant...\n", port, err)
+	}
+	
+	// Si on arrive ici, tous les ports ont échoué
+	return fmt.Errorf("échec de connexion sur tous les ports (%v): %v", portsToTry, lastError)
 }
 
 // RsyncBackup effectue une sauvegarde avec rsync
@@ -184,25 +229,28 @@ func RsyncBackup(source, destination string, excludeDirs, excludeFiles []string,
 		sourceBaseName := filepath.Base(strings.TrimSuffix(source, "/"))
 		
 		// Construire le chemin de destination sur le serveur distant incluant le timestamp
-		// Format pour destination distante avec module rsync
 		if remoteServer.DefaultModule != "" {
-			// Format: module/sourceBaseName/YYYY_MM_DD_HH-MM-SS/
-			finalDestination = fmt.Sprintf("%s::%s/%s/%s/", 
+			// Format pour destination distante avec module rsync
+			// Format: user@host::module/sourceBaseName/timestamp/
+			finalDestination = fmt.Sprintf("%s::%s/%s_%s_%s/",
 				remoteServer.IP,
 				remoteServer.DefaultModule,
 				sourceBaseName,
-				timestamp)
+				timestamp,
+				common.GenerateRandomString(6))
 			
 			if remoteServer.Username != "" {
 				finalDestination = fmt.Sprintf("%s@%s", remoteServer.Username, finalDestination)
 			}
 		} else {
-			// Format pour destination SSH: user@host:path/sourceBaseName/YYYY_MM_DD_HH-MM-SS/
-			finalDestination = fmt.Sprintf("%s@%s:%s/%s/",
+			// Format pour destination SSH: user@host:path/sourceBaseName/timestamp/
+			finalDestination = fmt.Sprintf("%s@%s:%s/%s_%s_%s/",
 				remoteServer.Username,
 				remoteServer.IP,
+				remoteServer.DefaultPath,
 				sourceBaseName,
-				timestamp)
+				timestamp,
+				common.GenerateRandomString(6))
 		}
 
 		// Chercher la dernière sauvegarde pour créer une sauvegarde incrémentale
@@ -297,8 +345,6 @@ func RsyncBackup(source, destination string, excludeDirs, excludeFiles []string,
 		return fmt.Errorf("erreur rsync: %v", err)
 	}
 
-	// Retourner le chemin de destination final pour l'enregistrement des métadonnées
-	destination = finalDestination
 	return nil
 }
 
