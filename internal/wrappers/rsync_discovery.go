@@ -163,10 +163,10 @@ func checkRsyncServer(ip string) RsyncServer {
 }
 
 // checkSSHPort vérifie si un port SSH est ouvert sur le serveur
-// Vérifie les ports courants : 22 (défaut) et 2223 (comme mentionné par l'utilisateur)
+// Vérifie les ports courants : 22 (défaut), 2224, 2222, 2223
 func checkSSHPort(ip string) int {
-	// Liste des ports SSH courants à vérifier
-	ports := []int{22, 2223, 2222}
+	// Liste des ports SSH courants à vérifier, prioriser 22 et 2224 qui sont utilisés par le NAS
+	ports := []int{22, 2224, 2222, 2223}
 
 	for _, port := range ports {
 		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, port), 500*time.Millisecond)
