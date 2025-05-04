@@ -6,15 +6,26 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"strings"
 )
 
 // Config représente la configuration globale de l'application
 type Config struct {
-	BackupDirs        []BackupConfig     `json:"backupDirectories"`
-	BackupDestination string             `json:"backupDestination"`
-	RsyncServers      []RsyncServerConfig `json:"rsyncServers"`
-	RetentionPolicy   RetentionPolicy    `json:"retentionPolicy"`
-	LastUpdate        time.Time          `json:"last_update"`
+	BackupDirs       []BackupConfig     `json:"backupDirectories"`
+	BackupDestinations []BackupDestination `json:"backupDestinations"` // Nouvelle liste de destinations
+	BackupDestination string             `json:"backupDestination"`    // Gardé pour rétrocompatibilité
+	RsyncServers     []RsyncServerConfig `json:"rsyncServers"`
+	RetentionPolicy  RetentionPolicy    `json:"retentionPolicy"`
+	LastUpdate       time.Time          `json:"last_update"`
+}
+
+// BackupDestination représente une destination où les sauvegardes peuvent être stockées
+type BackupDestination struct {
+	Name        string `json:"name"`        // Nom unique pour cette destination
+	Path        string `json:"path"`        // Chemin où les sauvegardes seront stockées
+	Type        string `json:"type"`        // Type: "local", "rsync", "cloud", etc.
+	IsDefault   bool   `json:"isDefault"`   // Indique si c'est la destination par défaut
+	RsyncServer *RsyncServerConfig `json:"rsyncServer,omitempty"` // Configuration rsync si applicable
 }
 
 // BackupConfig contient la configuration pour un répertoire à sauvegarder
@@ -27,6 +38,7 @@ type BackupConfig struct {
 	ExcludeFiles  []string `json:"excludeFiles,omitempty"`
 	Interval      int      `json:"interval"` // en minutes, 0 pour désactiver
 	RemoteServer  *RsyncServerConfig `json:"remoteServer,omitempty"` // Serveur rsync distant
+	DestinationName string `json:"destinationName,omitempty"` // Nom de la destination à utiliser (si vide, utilise la destination par défaut)
 }
 
 // RetentionPolicy définit combien de temps les sauvegardes sont conservées
@@ -45,6 +57,7 @@ type RsyncServerConfig struct {
 	Username      string   `json:"username"`
 	Modules       []string `json:"modules"`
 	DefaultModule string   `json:"defaultModule"`
+	DefaultPath   string   `json:"defaultPath"` // Chemin par défaut sur le serveur distant
 }
 
 // BackupInfo contient les informations sur une sauvegarde
@@ -58,6 +71,7 @@ type BackupInfo struct {
 	IsIncremental bool     `json:"isIncremental"`
 	Compression  bool      `json:"compression"`
 	RemoteServer *RsyncServerConfig `json:"remoteServer,omitempty"` // Serveur rsync distant si applicable
+	DestinationName string `json:"destinationName,omitempty"` // Nom de la destination utilisée
 }
 
 // Variables globales
@@ -100,10 +114,18 @@ func InitApp() error {
 		defaultConfig := Config{
 			BackupDirs: []BackupConfig{},
 			BackupDestination: filepath.Join(configDir, "backups"),
+			BackupDestinations: []BackupDestination{
+				{
+					Name:      "Local",
+					Path:      filepath.Join(configDir, "backups"),
+					Type:      "local",
+					IsDefault: true,
+				},
+			},
 			RetentionPolicy: RetentionPolicy{
 				KeepDaily:   7,
 				KeepWeekly:  4,
-				KeepMonthly: 3,
+				KeepMonthly:  3,
 			},
 		}
 		
@@ -117,6 +139,23 @@ func InitApp() error {
 	if err != nil {
 		return fmt.Errorf("impossible de charger la configuration: %w", err)
 	}
+	
+	// Migration: si aucune destination n'est définie mais BackupDestination existe
+	if len(config.BackupDestinations) == 0 && config.BackupDestination != "" {
+		config.BackupDestinations = []BackupDestination{
+			{
+				Name:      "Default",
+				Path:      config.BackupDestination,
+				Type:      "local",
+				IsDefault: true,
+			},
+		}
+		// Sauvegarder la configuration migrée
+		if err := SaveConfig(config); err != nil {
+			return fmt.Errorf("impossible de migrer la configuration: %w", err)
+		}
+	}
+	
 	AppConfig = config
 
 	return nil
@@ -162,6 +201,101 @@ func GetBackupConfig(name string) (BackupConfig, bool) {
 		}
 	}
 	return BackupConfig{}, false
+}
+
+// AddBackupDestination ajoute une destination de sauvegarde à la configuration
+func AddBackupDestination(dest BackupDestination) error {
+	// Si cette destination est définie comme par défaut, désactiver le flag pour toutes les autres
+	if dest.IsDefault {
+		for i := range AppConfig.BackupDestinations {
+			AppConfig.BackupDestinations[i].IsDefault = false
+		}
+	}
+	
+	// Si aucune destination n'est définie comme par défaut, marquer celle-ci comme par défaut
+	if len(AppConfig.BackupDestinations) == 0 {
+		dest.IsDefault = true
+	}
+	
+	AppConfig.BackupDestinations = append(AppConfig.BackupDestinations, dest)
+	
+	// Mettre à jour aussi le champ BackupDestination pour compatibilité
+	if dest.IsDefault {
+		AppConfig.BackupDestination = dest.Path
+	}
+	
+	return SaveConfig(AppConfig)
+}
+
+// GetDefaultBackupDestination récupère la destination de sauvegarde par défaut
+func GetDefaultBackupDestination() (BackupDestination, bool) {
+	for _, dest := range AppConfig.BackupDestinations {
+		if dest.IsDefault {
+			return dest, true
+		}
+	}
+	
+	// Fallback: utiliser la première destination si aucune n'est marquée comme par défaut
+	if len(AppConfig.BackupDestinations) > 0 {
+		return AppConfig.BackupDestinations[0], true
+	}
+	
+	// Si aucune destination n'est définie, essayer d'utiliser l'ancienne valeur BackupDestination
+	if AppConfig.BackupDestination != "" {
+		// Détecter le type de destination en fonction du préfixe
+		destinationType := "local"
+		destinationName := "Default (local)"
+		
+		if strings.HasPrefix(AppConfig.BackupDestination, "rsync://") {
+			destinationType = "rsync"
+			destinationName = "Default (rsync)"
+		}
+		
+		return BackupDestination{
+			Name:      destinationName,
+			Path:      AppConfig.BackupDestination,
+			Type:      destinationType,
+			IsDefault: true,
+		}, true
+	}
+	
+	return BackupDestination{}, false
+}
+
+// GetBackupDestination récupère une destination de sauvegarde par son nom
+func GetBackupDestination(name string) (BackupDestination, bool) {
+	for _, dest := range AppConfig.BackupDestinations {
+		if dest.Name == name {
+			return dest, true
+		}
+	}
+	return BackupDestination{}, false
+}
+
+// DeleteBackupDestination supprime une destination de sauvegarde
+func DeleteBackupDestination(name string) error {
+	for i, dest := range AppConfig.BackupDestinations {
+		if dest.Name == name {
+			// Vérifier si c'est la destination par défaut
+			isDefault := dest.IsDefault
+			
+			// Supprimer la destination
+			AppConfig.BackupDestinations = append(
+				AppConfig.BackupDestinations[:i],
+				AppConfig.BackupDestinations[i+1:]...,
+			)
+			
+			// Si c'était la destination par défaut, définir une nouvelle destination par défaut
+			if isDefault && len(AppConfig.BackupDestinations) > 0 {
+				AppConfig.BackupDestinations[0].IsDefault = true
+				AppConfig.BackupDestination = AppConfig.BackupDestinations[0].Path
+			}
+			
+			return SaveConfig(AppConfig)
+		}
+	}
+	
+	return fmt.Errorf("destination de sauvegarde '%s' non trouvée", name)
 }
 
 // SaveBackupInfo sauvegarde les métadonnées d'une sauvegarde
@@ -271,7 +405,7 @@ func DeleteRsyncServer(name string) error {
 // ensureConfigLoaded vérifie si la configuration est chargée et la charge si nécessaire
 func ensureConfigLoaded() error {
 	// Si AppConfig est vide, charger la configuration
-	if len(AppConfig.BackupDirs) == 0 && AppConfig.BackupDestination == "" {
+	if len(AppConfig.BackupDirs) == 0 && len(AppConfig.BackupDestinations) == 0 && AppConfig.BackupDestination == "" {
 		config, err := LoadConfig()
 		if err != nil {
 			return fmt.Errorf("impossible de charger la configuration: %w", err)
