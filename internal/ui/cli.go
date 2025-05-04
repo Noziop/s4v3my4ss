@@ -219,41 +219,119 @@ func configureBackup() {
 		return
 	}
 	
-	// Permettre à l'utilisateur de choisir l'emplacement de sauvegarde
-	backupDestination := readInput("Emplacement des sauvegardes (vide pour utiliser l'emplacement par défaut): ")
-	if backupDestination != "" {
-		// Expandir les chemins relatifs, y compris ~/
-		if strings.HasPrefix(backupDestination, "~/") {
-			homeDir, err := os.UserHomeDir()
-			if err == nil {
-				backupDestination = filepath.Join(homeDir, backupDestination[2:])
+	// Afficher les destinations de sauvegarde disponibles
+	destChoice := ""
+	destinations := common.AppConfig.BackupDestinations
+	
+	if len(destinations) > 0 {
+		fmt.Println("\nDestinations de sauvegarde disponibles:")
+		defaultIndex := -1
+		
+		for i, dest := range destinations {
+			destTypeStr := ""
+			if dest.Type == "rsync" {
+				destTypeStr = "(rsync)"
+			} else if dest.Type == "local" {
+				destTypeStr = "(local)"
 			}
+			
+			defaultStr := ""
+			if dest.IsDefault {
+				defaultStr = " (Par défaut)"
+				defaultIndex = i
+			}
+			
+			fmt.Printf("%d. %s %s%s\n   Chemin: %s\n", i+1, dest.Name, destTypeStr, defaultStr, dest.Path)
 		}
 		
-		// Normaliser le chemin
-		backupDestination = filepath.Clean(backupDestination)
+		fmt.Printf("%d. Nouvelle destination\n", len(destinations)+1)
 		
-		// Vérifier/créer le répertoire de destination
-		if !common.DirExists(backupDestination) {
-			fmt.Printf("Le répertoire de destination n'existe pas. Voulez-vous le créer? (o/n): ")
-			createDest := readInput("")
-			if strings.ToLower(createDest) == "o" {
-				if err := os.MkdirAll(backupDestination, 0755); err != nil {
-					fmt.Printf("%sErreur lors de la création du répertoire: %v%s\n", colorRed, err, colorReset)
+		destChoiceStr := readInput("\nEmplacement des sauvegardes (numéro ou vide pour utiliser l'emplacement par défaut): ")
+		
+		if destChoiceStr == "" && defaultIndex >= 0 {
+			destChoice = destinations[defaultIndex].Name
+		} else if destChoiceStr != "" {
+			destIdx, err := strconv.Atoi(destChoiceStr)
+			if err == nil && destIdx > 0 {
+				if destIdx <= len(destinations) {
+					destChoice = destinations[destIdx-1].Name
+				} else if destIdx == len(destinations)+1 {
+					// Nouvelle destination
+					destChoice = "new"
+				}
+			}
+		}
+	}
+	
+	// Configuration de la destination de sauvegarde
+	backupDestinationName := ""
+	backupDestination := ""
+	
+	if destChoice == "new" || (len(destinations) == 0 && destChoice == "") {
+		// Demander un nouvel emplacement de sauvegarde
+		backupDestination = readInput("Nouvel emplacement des sauvegardes: ")
+		
+		if backupDestination != "" {
+			// Expandir les chemins relatifs, y compris ~/
+			if strings.HasPrefix(backupDestination, "~/") {
+				homeDir, err := os.UserHomeDir()
+				if err == nil {
+					backupDestination = filepath.Join(homeDir, backupDestination[2:])
+				}
+			}
+			
+			// Normaliser le chemin
+			backupDestination = filepath.Clean(backupDestination)
+			
+			// Détecter si c'est un chemin rsync
+			destType := "local"
+			if strings.HasPrefix(backupDestination, "rsync://") {
+				destType = "rsync"
+			}
+			
+			// Vérifier/créer le répertoire de destination (seulement pour les destinations locales)
+			if destType == "local" && !common.DirExists(backupDestination) {
+				fmt.Printf("Le répertoire de destination n'existe pas. Voulez-vous le créer? (o/n): ")
+				createDest := readInput("")
+				if strings.ToLower(createDest) == "o" {
+					if err := os.MkdirAll(backupDestination, 0755); err != nil {
+						fmt.Printf("%sErreur lors de la création du répertoire: %v%s\n", colorRed, err, colorReset)
+						return
+					}
+				} else {
+					fmt.Println("Configuration annulée.")
 					return
 				}
-			} else {
-				fmt.Println("Configuration annulée.")
+			}
+			
+			// Demander un nom pour la nouvelle destination
+			newDestName := readInput("Nom de la nouvelle destination: ")
+			if newDestName == "" {
+				newDestName = "Destination " + strconv.Itoa(len(destinations)+1)
+			}
+			
+			// Demander si cette destination doit être la destination par défaut
+			defaultDestStr := readInput("Définir comme destination par défaut? (o/n): ")
+			isDefaultDest := strings.ToLower(defaultDestStr) == "o"
+			
+			// Créer et ajouter la nouvelle destination
+			newDest := common.BackupDestination{
+				Name:      newDestName,
+				Path:      backupDestination,
+				Type:      destType,
+				IsDefault: isDefaultDest,
+			}
+			
+			if err := common.AddBackupDestination(newDest); err != nil {
+				fmt.Printf("%sErreur lors de l'ajout de la destination: %v%s\n", colorRed, err, colorReset)
 				return
 			}
+			
+			backupDestinationName = newDestName
 		}
-		
-		// Mettre à jour la destination dans la configuration globale
-		common.AppConfig.BackupDestination = backupDestination
-		if err := common.SaveConfig(common.AppConfig); err != nil {
-			fmt.Printf("%sErreur lors de la mise à jour de la configuration: %v%s\n", colorRed, err, colorReset)
-			return
-		}
+	} else if destChoice != "" {
+		// Utiliser une destination existante
+		backupDestinationName = destChoice
 	}
 	
 	// Option pour une sauvegarde incrémentale
@@ -297,13 +375,14 @@ func configureBackup() {
 	
 	// Créer la configuration
 	config := common.BackupConfig{
-		Name:         name,
-		SourcePath:   sourcePath,
-		Compression:  compression,
-		ExcludeDirs:  excludeDirs,
-		ExcludeFiles: excludeFiles,
-		Interval:     interval,
-		IsIncremental: incremental, // Correction du nom du champ (de Incremental à IsIncremental)
+		Name:          name,
+		SourcePath:    sourcePath,
+		Compression:   compression,
+		ExcludeDirs:   excludeDirs,
+		ExcludeFiles:  excludeFiles,
+		Interval:      interval,
+		IsIncremental: incremental,
+		DestinationName: backupDestinationName,
 	}
 	
 	// Ajouter à la configuration
@@ -971,6 +1050,10 @@ func configureRemoteBackup(serverConfig common.RsyncServerConfig) {
 		destination += module
 	}
 	
+	// Option pour une sauvegarde incrémentale
+	incrementalStr := readInput("Activer les sauvegardes incrémentales? (o/n): ")
+	incremental := strings.ToLower(incrementalStr) == "o"
+	
 	// Compression
 	compressStr := readInput("Activer la compression? (o/n): ")
 	compression := strings.ToLower(compressStr) == "o"
@@ -1007,13 +1090,14 @@ func configureRemoteBackup(serverConfig common.RsyncServerConfig) {
 	
 	// Créer la configuration de sauvegarde
 	backupConfig := common.BackupConfig{
-		Name:         name,
-		SourcePath:   sourcePath,
-		Compression:  compression,
-		ExcludeDirs:  excludeDirs,
-		ExcludeFiles: excludeFiles,
-		Interval:     interval,
-		RemoteServer: &serverConfig, // Utiliser l'adresse de serverConfig pour obtenir un pointeur
+		Name:          name,
+		SourcePath:    sourcePath,
+		Compression:   compression,
+		ExcludeDirs:   excludeDirs,
+		ExcludeFiles:  excludeFiles,
+		Interval:      interval,
+		IsIncremental: incremental,
+		RemoteServer:  &serverConfig, // Utiliser l'adresse de serverConfig pour obtenir un pointeur
 	}
 	
 	// Mise à jour de la destination dans la configuration globale
@@ -1061,7 +1145,7 @@ func configureRemoteBackup(serverConfig common.RsyncServerConfig) {
 					BackupPath:   destination,
 					Time:         time.Now(),
 					Size:         size,
-					IsIncremental: false,
+					IsIncremental: incremental,
 					Compression:   compression,
 					RemoteServer: &serverConfig, // Utiliser l'adresse de serverConfig pour obtenir un pointeur
 				}
@@ -1109,7 +1193,8 @@ func manageConfiguration() {
 		fmt.Printf("  %s2.%s Modifier les répertoires sauvegardés\n", colorGreen, colorReset)
 		fmt.Printf("  %s3.%s Modifier/supprimer les serveurs rsync\n", colorGreen, colorReset)
 		fmt.Printf("  %s4.%s Modifier la politique de rétention\n", colorGreen, colorReset)
-		fmt.Printf("  %s5.%s Modifier la destination des sauvegardes\n", colorGreen, colorReset)
+		fmt.Printf("  %s5.%s Gérer les destinations de sauvegarde\n", colorGreen, colorReset)
+		fmt.Printf("  %s6.%s Modifier la destination principale\n", colorGreen, colorReset)
 		fmt.Printf("  %s0.%s Retour au menu principal\n", colorGreen, colorReset)
 		
 		choice := readInput("Votre choix: ")
@@ -1124,6 +1209,8 @@ func manageConfiguration() {
 		case "4":
 			manageRetentionPolicy()
 		case "5":
+			manageBackupDestinations()
+		case "6":
 			changeBackupDestination()
 		case "0":
 			return
@@ -1739,4 +1826,499 @@ func changeBackupDestination() {
 	}
 	
 	fmt.Printf("%sDestination des sauvegardes mise à jour avec succès.%s\n", colorGreen, colorReset)
+}
+
+// manageBackupDestinations permet de gérer les destinations de sauvegarde
+func manageBackupDestinations() {
+	for {
+		clearScreen()
+		fmt.Printf("%sGestion des Destinations de Sauvegarde%s\n\n", colorBold, colorReset)
+		
+		// Afficher la liste des destinations actuelles
+		fmt.Println("Destinations configurées:")
+		
+		if len(common.AppConfig.BackupDestinations) == 0 {
+			fmt.Printf("%sAucune destination configurée%s\n\n", colorYellow, colorReset)
+		} else {
+			for i, dest := range common.AppConfig.BackupDestinations {
+				defaultMark := ""
+				if dest.IsDefault {
+					defaultMark = fmt.Sprintf(" %s(Par défaut)%s", colorGreen, colorReset)
+				}
+				
+				fmt.Printf("%d. %s (%s)%s\n", i+1, dest.Name, dest.Type, defaultMark)
+				fmt.Printf("   Chemin: %s\n", dest.Path)
+				
+				// Afficher des informations supplémentaires en fonction du type
+				if dest.Type == "rsync" && dest.RsyncServer != nil {
+					fmt.Printf("   Serveur: %s@%s\n", dest.RsyncServer.Username, dest.RsyncServer.IP)
+					if dest.RsyncServer.DefaultModule != "" {
+						fmt.Printf("   Module: %s\n", dest.RsyncServer.DefaultModule)
+					}
+				}
+				fmt.Println()
+			}
+		}
+		
+		// Menu d'options
+		fmt.Printf("\n  %s1.%s Ajouter une destination\n", colorGreen, colorReset)
+		fmt.Printf("  %s2.%s Modifier une destination\n", colorGreen, colorReset)
+		fmt.Printf("  %s3.%s Supprimer une destination\n", colorGreen, colorReset)
+		fmt.Printf("  %s4.%s Définir la destination par défaut\n", colorGreen, colorReset)
+		fmt.Printf("  %s0.%s Retour\n\n", colorGreen, colorReset)
+		
+		choice := readInput("Votre choix: ")
+		
+		switch choice {
+		case "1":
+			addBackupDestination()
+		case "2":
+			editBackupDestination()
+		case "3":
+			deleteBackupDestination()
+		case "4":
+			setDefaultDestination()
+		case "0":
+			return
+		default:
+			fmt.Println("Option non valide. Veuillez réessayer.")
+			readInput("Appuyez sur Entrée pour continuer...")
+		}
+	}
+}
+
+// addBackupDestination ajoute une nouvelle destination de sauvegarde
+func addBackupDestination() {
+	clearScreen()
+	fmt.Printf("%sAjout d'une Nouvelle Destination de Sauvegarde%s\n\n", colorBold, colorReset)
+	
+	// Demander les informations de base
+	name := readInput("Nom de la destination: ")
+	if name == "" {
+		fmt.Printf("%sLe nom ne peut pas être vide.%s\n", colorRed, colorReset)
+		readInput("Appuyez sur Entrée pour continuer...")
+		return
+	}
+	
+	// Vérifier si le nom existe déjà
+	if _, found := common.GetBackupDestination(name); found {
+		fmt.Printf("%sUne destination avec ce nom existe déjà.%s\n", colorRed, colorReset)
+		readInput("Appuyez sur Entrée pour continuer...")
+		return
+	}
+	
+	// Type de destination
+	fmt.Println("\nTypes de destination disponibles:")
+	fmt.Printf("  %s1.%s Local (système de fichiers)\n", colorGreen, colorReset)
+	fmt.Printf("  %s2.%s Rsync (serveur distant)\n", colorGreen, colorReset)
+	
+	destType := ""
+	typeChoice := readInput("\nType de destination [1]: ")
+	if typeChoice == "" || typeChoice == "1" {
+		destType = "local"
+	} else if typeChoice == "2" {
+		destType = "rsync"
+	} else {
+		fmt.Printf("%sType non valide. Utilisation du type 'local' par défaut.%s\n", colorYellow, colorReset)
+		destType = "local"
+	}
+	
+	// Informations spécifiques au type
+	var path string
+	var rsyncServer *common.RsyncServerConfig
+	
+	if destType == "local" {
+		// Pour une destination locale, demander le chemin
+		path = readInput("\nChemin de la destination: ")
+		if path == "" {
+			fmt.Printf("%sLe chemin ne peut pas être vide.%s\n", colorRed, colorReset)
+			readInput("Appuyez sur Entrée pour continuer...")
+			return
+		}
+		
+		// Vérifier si le répertoire existe, sinon proposer de le créer
+		if !common.DirExists(path) {
+			createDir := readInput(fmt.Sprintf("Le répertoire %s n'existe pas. Voulez-vous le créer? (o/n): ", path))
+			if createDir == "o" || createDir == "O" || createDir == "oui" || createDir == "Oui" {
+				if err := os.MkdirAll(path, 0755); err != nil {
+					fmt.Printf("%sErreur lors de la création du répertoire: %s%s\n", colorRed, err, colorReset)
+					readInput("Appuyez sur Entrée pour continuer...")
+					return
+				}
+				fmt.Printf("%sRépertoire créé avec succès.%s\n", colorGreen, colorReset)
+			} else {
+				fmt.Printf("%sOpération annulée.%s\n", colorYellow, colorReset)
+				readInput("Appuyez sur Entrée pour continuer...")
+				return
+			}
+		}
+	} else if destType == "rsync" {
+		// Pour une destination rsync, sélectionner un serveur et un module
+		servers, err := common.GetRsyncServers()
+		if err != nil || len(servers) == 0 {
+			fmt.Printf("%sAucun serveur rsync configuré. Veuillez d'abord ajouter un serveur.%s\n", colorRed, colorReset)
+			readInput("Appuyez sur Entrée pour continuer...")
+			return
+		}
+		
+		// Afficher la liste des serveurs
+		fmt.Println("\nServeurs rsync disponibles:")
+		for i, server := range servers {
+			fmt.Printf("  %d. %s (%s@%s)\n", i+1, server.Name, server.Username, server.IP)
+		}
+		
+		// Sélectionner un serveur
+		serverChoice := readInput("\nSélectionnez un serveur [1]: ")
+		serverIndex := 0
+		if serverChoice != "" {
+			if idx, err := strconv.Atoi(serverChoice); err == nil && idx >= 1 && idx <= len(servers) {
+				serverIndex = idx - 1
+			} else {
+				fmt.Printf("%sChoix non valide. Utilisation du premier serveur.%s\n", colorYellow, colorReset)
+			}
+		}
+		
+		selectedServer := servers[serverIndex]
+		rsyncServer = &selectedServer
+		
+		// Sélectionner un module si disponible
+		if len(selectedServer.Modules) > 0 {
+			fmt.Println("\nModules disponibles:")
+			for i, module := range selectedServer.Modules {
+				fmt.Printf("  %d. %s\n", i+1, module)
+			}
+			
+			moduleChoice := readInput(fmt.Sprintf("\nSélectionnez un module [%s]: ", selectedServer.DefaultModule))
+			selectedModule := selectedServer.DefaultModule
+			
+			if moduleChoice != "" {
+				if idx, err := strconv.Atoi(moduleChoice); err == nil && idx >= 1 && idx <= len(selectedServer.Modules) {
+					selectedModule = selectedServer.Modules[idx-1]
+				} else {
+					fmt.Printf("%sChoix non valide. Utilisation du module par défaut.%s\n", colorYellow, colorReset)
+				}
+			}
+			
+			// Construire le chemin rsync
+			path = fmt.Sprintf("rsync://%s@%s/%s", selectedServer.Username, selectedServer.IP, selectedModule)
+		} else {
+			fmt.Printf("%sAucun module disponible pour ce serveur.%s\n", colorRed, colorReset)
+			readInput("Appuyez sur Entrée pour continuer...")
+			return
+		}
+	}
+	
+	// Demander si c'est la destination par défaut
+	isDefault := false
+	if len(common.AppConfig.BackupDestinations) == 0 {
+		// Si c'est la première destination, elle est automatiquement par défaut
+		isDefault = true
+		fmt.Println("\nCette destination sera définie comme destination par défaut.")
+	} else {
+		defaultChoice := readInput("\nDéfinir comme destination par défaut? (o/n): ")
+		isDefault = defaultChoice == "o" || defaultChoice == "O" || defaultChoice == "oui" || defaultChoice == "Oui"
+	}
+	
+	// Créer la destination
+	destination := common.BackupDestination{
+		Name:        name,
+		Path:        path,
+		Type:        destType,
+		IsDefault:   isDefault,
+		RsyncServer: rsyncServer,
+	}
+	
+	// Ajouter la destination à la configuration
+	if err := common.AddBackupDestination(destination); err != nil {
+		fmt.Printf("%sErreur lors de l'ajout de la destination: %s%s\n", colorRed, err, colorReset)
+	} else {
+		fmt.Printf("%sDestination ajoutée avec succès.%s\n", colorGreen, colorReset)
+	}
+	
+	readInput("\nAppuyez sur Entrée pour continuer...")
+}
+
+// editBackupDestination permet de modifier une destination existante
+func editBackupDestination() {
+	if len(common.AppConfig.BackupDestinations) == 0 {
+		fmt.Printf("%sAucune destination à modifier.%s\n", colorYellow, colorReset)
+		readInput("Appuyez sur Entrée pour continuer...")
+		return
+	}
+	
+	clearScreen()
+	fmt.Printf("%sModification d'une Destination de Sauvegarde%s\n\n", colorBold, colorReset)
+	
+	// Afficher la liste des destinations
+	fmt.Println("Destinations disponibles:")
+	for i, dest := range common.AppConfig.BackupDestinations {
+		defaultMark := ""
+		if dest.IsDefault {
+			defaultMark = fmt.Sprintf(" %s(Par défaut)%s", colorGreen, colorReset)
+		}
+		fmt.Printf("  %d. %s (%s)%s\n", i+1, dest.Name, dest.Type, defaultMark)
+	}
+	
+	// Sélectionner une destination
+	destChoice := readInput("\nSélectionnez une destination à modifier [1]: ")
+	destIndex := 0
+	if destChoice != "" {
+		if idx, err := strconv.Atoi(destChoice); err == nil && idx >= 1 && idx <= len(common.AppConfig.BackupDestinations) {
+			destIndex = idx - 1
+		} else {
+			fmt.Printf("%sChoix non valide. Modification annulée.%s\n", colorRed, colorReset)
+			readInput("Appuyez sur Entrée pour continuer...")
+			return
+		}
+	}
+	
+	// Récupérer la destination à modifier
+	destination := common.AppConfig.BackupDestinations[destIndex]
+	
+	// Modifier les propriétés
+	fmt.Printf("\nModification de la destination: %s\n\n", destination.Name)
+	
+	// Nom (ne peut pas être vide)
+	newName := readInput(fmt.Sprintf("Nouveau nom [%s]: ", destination.Name))
+	if newName != "" {
+		// Vérifier si le nouveau nom existe déjà pour une autre destination
+		if newName != destination.Name {
+			for _, dest := range common.AppConfig.BackupDestinations {
+				if dest.Name == newName {
+					fmt.Printf("%sUne destination avec ce nom existe déjà.%s\n", colorRed, colorReset)
+					readInput("Appuyez sur Entrée pour continuer...")
+					return
+				}
+			}
+		}
+		destination.Name = newName
+	}
+	
+	// Pour les destinations locales, permettre de modifier le chemin
+	if destination.Type == "local" {
+		newPath := readInput(fmt.Sprintf("Nouveau chemin [%s]: ", destination.Path))
+		if newPath != "" {
+			destination.Path = newPath
+			
+			// Vérifier si le répertoire existe, sinon proposer de le créer
+			if !common.DirExists(newPath) {
+				createDir := readInput(fmt.Sprintf("Le répertoire %s n'existe pas. Voulez-vous le créer? (o/n): ", newPath))
+				if createDir == "o" || createDir == "O" || createDir == "oui" || createDir == "Oui" {
+					if err := os.MkdirAll(newPath, 0755); err != nil {
+						fmt.Printf("%sErreur lors de la création du répertoire: %s%s\n", colorRed, err, colorReset)
+					} else {
+						fmt.Printf("%sRépertoire créé avec succès.%s\n", colorGreen, colorReset)
+					}
+				}
+			}
+		}
+	} else if destination.Type == "rsync" {
+		// Pour rsync, permettre de changer le serveur ou le module
+		fmt.Println("\nVoulez-vous modifier le serveur rsync?")
+		changeServer := readInput("Changer le serveur? (o/n): ")
+		
+		if changeServer == "o" || changeServer == "O" || changeServer == "oui" || changeServer == "Oui" {
+			servers, err := common.GetRsyncServers()
+			if err != nil || len(servers) == 0 {
+				fmt.Printf("%sAucun serveur rsync configuré.%s\n", colorRed, colorReset)
+			} else {
+				// Afficher la liste des serveurs
+				fmt.Println("\nServeurs rsync disponibles:")
+				for i, server := range servers {
+					fmt.Printf("  %d. %s (%s@%s)\n", i+1, server.Name, server.Username, server.IP)
+				}
+				
+				// Sélectionner un serveur
+				serverChoice := readInput("\nSélectionnez un serveur [1]: ")
+				serverIndex := 0
+				if serverChoice != "" {
+					if idx, err := strconv.Atoi(serverChoice); err == nil && idx >= 1 && idx <= len(servers) {
+						serverIndex = idx - 1
+					} else {
+						fmt.Printf("%sChoix non valide.%s\n", colorYellow, colorReset)
+						serverIndex = -1
+					}
+				}
+				
+				if serverIndex >= 0 {
+					selectedServer := servers[serverIndex]
+					destination.RsyncServer = &selectedServer
+					
+					// Sélectionner un module si disponible
+					if len(selectedServer.Modules) > 0 {
+						fmt.Println("\nModules disponibles:")
+						for i, module := range selectedServer.Modules {
+							fmt.Printf("  %d. %s\n", i+1, module)
+						}
+						
+						moduleChoice := readInput(fmt.Sprintf("\nSélectionnez un module [%s]: ", selectedServer.DefaultModule))
+						selectedModule := selectedServer.DefaultModule
+						
+						if moduleChoice != "" {
+							if idx, err := strconv.Atoi(moduleChoice); err == nil && idx >= 1 && idx <= len(selectedServer.Modules) {
+								selectedModule = selectedServer.Modules[idx-1]
+							} else {
+								fmt.Printf("%sChoix non valide. Utilisation du module par défaut.%s\n", colorYellow, colorReset)
+							}
+						}
+						
+						// Construire le chemin rsync
+						destination.Path = fmt.Sprintf("rsync://%s@%s/%s", selectedServer.Username, selectedServer.IP, selectedModule)
+					} else {
+						fmt.Printf("%sAucun module disponible pour ce serveur.%s\n", colorRed, colorReset)
+					}
+				}
+			}
+		}
+	}
+	
+	// Définir comme destination par défaut
+	if !destination.IsDefault {
+		defaultChoice := readInput("\nDéfinir comme destination par défaut? (o/n): ")
+		if defaultChoice == "o" || defaultChoice == "O" || defaultChoice == "oui" || defaultChoice == "Oui" {
+			destination.IsDefault = true
+			
+			// Mettre à jour les autres destinations
+			for i := range common.AppConfig.BackupDestinations {
+				if i != destIndex {
+					common.AppConfig.BackupDestinations[i].IsDefault = false
+				}
+			}
+			
+			// Mettre à jour aussi le champ BackupDestination pour compatibilité
+			common.AppConfig.BackupDestination = destination.Path
+		}
+	}
+	
+	// Mettre à jour la destination
+	common.AppConfig.BackupDestinations[destIndex] = destination
+	
+	// Sauvegarder la configuration
+	if err := common.SaveConfig(common.AppConfig); err != nil {
+		fmt.Printf("%sErreur lors de la sauvegarde de la configuration: %s%s\n", colorRed, err, colorReset)
+	} else {
+		fmt.Printf("%sDestination modifiée avec succès.%s\n", colorGreen, colorReset)
+	}
+	
+	readInput("\nAppuyez sur Entrée pour continuer...")
+}
+
+// deleteBackupDestination permet de supprimer une destination de sauvegarde
+func deleteBackupDestination() {
+	if len(common.AppConfig.BackupDestinations) == 0 {
+		fmt.Printf("%sAucune destination à supprimer.%s\n", colorYellow, colorReset)
+		readInput("Appuyez sur Entrée pour continuer...")
+		return
+	}
+	
+	clearScreen()
+	fmt.Printf("%sSuppression d'une Destination de Sauvegarde%s\n\n", colorBold, colorReset)
+	
+	// Afficher la liste des destinations
+	fmt.Println("Destinations disponibles:")
+	for i, dest := range common.AppConfig.BackupDestinations {
+		defaultMark := ""
+		if dest.IsDefault {
+			defaultMark = fmt.Sprintf(" %s(Par défaut)%s", colorGreen, colorReset)
+		}
+		fmt.Printf("  %d. %s (%s)%s\n", i+1, dest.Name, dest.Type, defaultMark)
+	}
+	
+	// Sélectionner une destination
+	destChoice := readInput("\nSélectionnez une destination à supprimer [1]: ")
+	destIndex := 0
+	if destChoice != "" {
+		if idx, err := strconv.Atoi(destChoice); err == nil && idx >= 1 && idx <= len(common.AppConfig.BackupDestinations) {
+			destIndex = idx - 1
+		} else {
+			fmt.Printf("%sChoix non valide. Suppression annulée.%s\n", colorRed, colorReset)
+			readInput("Appuyez sur Entrée pour continuer...")
+			return
+		}
+	}
+	
+	// Récupérer la destination à supprimer
+	destination := common.AppConfig.BackupDestinations[destIndex]
+	
+	// Confirmation avant suppression
+	confirm := readInput(fmt.Sprintf("\nÊtes-vous sûr de vouloir supprimer la destination '%s'? (o/n): ", destination.Name))
+	if confirm != "o" && confirm != "O" && confirm != "oui" && confirm != "Oui" {
+		fmt.Printf("%sSuppression annulée.%s\n", colorYellow, colorReset)
+		readInput("Appuyez sur Entrée pour continuer...")
+		return
+	}
+	
+	// Vérifier si c'est la destination par défaut et s'il y a d'autres destinations
+	if destination.IsDefault && len(common.AppConfig.BackupDestinations) > 1 {
+		fmt.Println("\nCette destination est définie comme destination par défaut.")
+		fmt.Println("Une autre destination sera automatiquement définie comme destination par défaut.")
+	}
+	
+	// Supprimer la destination
+	if err := common.DeleteBackupDestination(destination.Name); err != nil {
+		fmt.Printf("%sErreur lors de la suppression de la destination: %s%s\n", colorRed, err, colorReset)
+	} else {
+		fmt.Printf("%sDestination supprimée avec succès.%s\n", colorGreen, colorReset)
+	}
+	
+	readInput("\nAppuyez sur Entrée pour continuer...")
+}
+
+// setDefaultDestination permet de définir la destination par défaut
+func setDefaultDestination() {
+	if len(common.AppConfig.BackupDestinations) == 0 {
+		fmt.Printf("%sAucune destination configurée.%s\n", colorYellow, colorReset)
+		readInput("Appuyez sur Entrée pour continuer...")
+		return
+	}
+	
+	clearScreen()
+	fmt.Printf("%sDéfinition de la Destination par Défaut%s\n\n", colorBold, colorReset)
+	
+	// Afficher la liste des destinations
+	fmt.Println("Destinations disponibles:")
+	for i, dest := range common.AppConfig.BackupDestinations {
+		defaultMark := ""
+		if dest.IsDefault {
+			defaultMark = fmt.Sprintf(" %s(Par défaut)%s", colorGreen, colorReset)
+		}
+		fmt.Printf("  %d. %s (%s)%s\n", i+1, dest.Name, dest.Type, defaultMark)
+	}
+	
+	// Sélectionner une destination
+	destChoice := readInput("\nSélectionnez une destination à définir comme par défaut [1]: ")
+	destIndex := 0
+	if destChoice != "" {
+		if idx, err := strconv.Atoi(destChoice); err == nil && idx >= 1 && idx <= len(common.AppConfig.BackupDestinations) {
+			destIndex = idx - 1
+		} else {
+			fmt.Printf("%sChoix non valide. Opération annulée.%s\n", colorRed, colorReset)
+			readInput("Appuyez sur Entrée pour continuer...")
+			return
+		}
+	}
+	
+	// Vérifier si la destination est déjà par défaut
+	if common.AppConfig.BackupDestinations[destIndex].IsDefault {
+		fmt.Printf("%sCette destination est déjà définie comme destination par défaut.%s\n", colorYellow, colorReset)
+		readInput("Appuyez sur Entrée pour continuer...")
+		return
+	}
+	
+	// Mettre à jour toutes les destinations
+	for i := range common.AppConfig.BackupDestinations {
+		common.AppConfig.BackupDestinations[i].IsDefault = (i == destIndex)
+	}
+	
+	// Mettre à jour le champ BackupDestination pour compatibilité
+	common.AppConfig.BackupDestination = common.AppConfig.BackupDestinations[destIndex].Path
+	
+	// Sauvegarder la configuration
+	if err := common.SaveConfig(common.AppConfig); err != nil {
+		fmt.Printf("%sErreur lors de la sauvegarde de la configuration: %s%s\n", colorRed, err, colorReset)
+	} else {
+		fmt.Printf("%sDestination par défaut modifiée avec succès.%s\n", colorGreen, colorReset)
+	}
+	
+	readInput("\nAppuyez sur Entrée pour continuer...")
 }
