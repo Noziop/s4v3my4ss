@@ -66,6 +66,31 @@ sudo make install-global
 go install github.com/Noziop/s4v3my4ss/cmd/saveme@latest
 ```
 
+
+### Go install troubleshooting
+
+After `go install`, if you get "command not found":
+
+```
+# The binary is installed but not in PATH
+# Add Go bin directory to your PATH:
+echo 'export PATH=$PATH:$(go env GOPATH)/bin' >> ~/.bashrc
+source ~/.bashrc
+
+# Or for zsh users:
+echo 'export PATH=$PATH:$(go env GOPATH)/bin' >> ~/.zshrc
+source ~/.zshrc
+
+# Test the installation:
+saveme --help
+```
+
+**Alternative**: Use the full path directly:
+```
+$(go env GOPATH)/bin/saveme --help
+```
+
+
 ## Usage
 
 ### Interactive mode
@@ -276,6 +301,29 @@ sudo make install-global
 
 ```
 go install github.com/Noziop/s4v3my4ss/cmd/saveme@latest
+```
+
+### Post-installation 'go install'
+
+Après installation, si vous lancez la cmd `saveme`, vous tomberez sur le message  "command not found"
+
+```
+# Le binaire est bien installé, mais pas dans PATH
+# Ajoutez Go bin dans votre PATH:
+echo 'export PATH=$PATH:$(go env GOPATH)/bin' >> ~/.bashrc
+source ~/.bashrc
+
+# ou pour les utilisateurs zsh :
+echo 'export PATH=$PATH:$(go env GOPATH)/bin' >> ~/.zshrc
+source ~/.zshrc
+
+# testez l'installation:
+saveme --help
+```
+
+**Alternative**: utilisation du chemin absolu:
+```
+$(go env GOPATH)/bin/saveme --help
 ```
 
 ## Utilisation
