@@ -11,12 +11,20 @@ import (
 
 // Config représente la configuration globale de l'application
 type Config struct {
-	BackupDirs       []BackupConfig     `json:"backupDirectories"`
-	BackupDestinations []BackupDestination `json:"backupDestinations"` // Nouvelle liste de destinations
-	BackupDestination string             `json:"backupDestination"`    // Gardé pour rétrocompatibilité
-	RsyncServers     []RsyncServerConfig `json:"rsyncServers"`
-	RetentionPolicy  RetentionPolicy    `json:"retentionPolicy"`
-	LastUpdate       time.Time          `json:"last_update"`
+	BackupDirs         []BackupConfig      `json:"backupDirectories"`
+	BackupDestinations []BackupDestination  `json:"backupDestinations"`
+	BackupDestination  string              `json:"backupDestination,omitempty"` // Gardé pour rétrocompatibilité
+	RsyncServers       []RsyncServerConfig `json:"rsyncServers"`
+	RetentionPolicy    RetentionPolicy     `json:"retentionPolicy"`
+	Security           SecurityConfig      `json:"security,omitempty"` // Configuration de sécurité
+	EncryptionKey      string              `json:"encryptionKey,omitempty"`   // Clé de chiffrement (pour une future implémentation)
+	LastUpdate         time.Time           `json:"last_update"`
+}
+
+// SecurityConfig contient les paramètres de sécurité de l'application.
+// Permet de restreindre les chemins de sauvegarde pour éviter les écritures dans des répertoires sensibles.
+type SecurityConfig struct {
+	AllowedBackupPaths []string `json:"allowedBackupPaths,omitempty"` // Liste blanche des chemins de destination autorisés
 }
 
 // BackupDestination représente une destination où les sauvegardes peuvent être stockées
@@ -33,6 +41,7 @@ type BackupConfig struct {
 	SourcePath    string   `json:"sourcePath"`
 	Name          string   `json:"name"`
 	Compression   bool     `json:"compression"`
+	Encrypt       bool     `json:"encrypt,omitempty"` // Activer le chiffrement pour cette sauvegarde
 	IsIncremental bool     `json:"isIncremental"` // Indique si la sauvegarde doit être incrémentale
 	ExcludeDirs   []string `json:"excludeDirs,omitempty"`
 	ExcludeFiles  []string `json:"excludeFiles,omitempty"`
@@ -48,16 +57,31 @@ type RetentionPolicy struct {
 	KeepMonthly int `json:"keepMonthly"`
 }
 
+// RetentionInterval représente les intervalles de rétention (quotidien, hebdomadaire, mensuel)
+type RetentionInterval string
+
+const (
+	Daily   RetentionInterval = "daily"
+	Weekly  RetentionInterval = "weekly"
+	Monthly RetentionInterval = "monthly"
+)
+
 // RsyncServerConfig contient les paramètres d'un serveur rsync distant
 type RsyncServerConfig struct {
-	Name          string   `json:"name"`
-	IP            string   `json:"ip"`
-	Port          int      `json:"port"`
-	SSHPort       int      `json:"sshPort"`
-	Username      string   `json:"username"`
-	Modules       []string `json:"modules"`
-	DefaultModule string   `json:"defaultModule"`
-	DefaultPath   string   `json:"defaultPath"` // Chemin par défaut sur le serveur distant
+	Name                  string   `json:"name"`
+	IP                    string   `json:"ip"`
+	Port                  int      `json:"port"`
+	SSHPort               int      `json:"sshPort"`
+	Username              string   `json:"username"`
+	// SECURITY: Le chemin vers la clé privée SSH est plus sécurisé que de stocker un mot de passe.
+	// L'utilisateur doit s'assurer que ce fichier est protégé avec des permissions restrictives (ex: 600).
+	SSHPrivateKeyPath     string   `json:"sshPrivateKeyPath,omitempty"`
+	// SECURITY: Spécifier l'empreinte de la clé de l'hôte SSH pour prévenir les attaques Man-in-the-Middle.
+	// L'empreinte peut être obtenue avec `ssh-keyscan` ou lors de la première connexion manuelle.
+	SSHHostKeyFingerprint string   `json:"sshHostKeyFingerprint,omitempty"`
+	Modules               []string `json:"modules"`
+	DefaultModule         string   `json:"defaultModule"`
+	DefaultPath           string   `json:"defaultPath"` // Chemin par défaut sur le serveur distant
 }
 
 // BackupInfo contient les informations sur une sauvegarde
@@ -70,6 +94,7 @@ type BackupInfo struct {
 	Size         int64     `json:"size"`
 	IsIncremental bool     `json:"isIncremental"`
 	Compression  bool      `json:"compression"`
+	Encrypted    bool      `json:"encrypted,omitempty"`
 	RemoteServer *RsyncServerConfig `json:"remoteServer,omitempty"` // Serveur rsync distant si applicable
 	DestinationName string `json:"destinationName,omitempty"` // Nom de la destination utilisée
 }
@@ -84,8 +109,15 @@ var (
 
 // Initialise l'application: répertoires, configuration, etc.
 func InitApp() error {
+	// Initialiser le logger au démarrage de l'application
+	if err := InitLogger(); err != nil {
+		return fmt.Errorf("impossible d'initialiser le logger: %w", err)
+	}
+	defer CloseLogger() // S'assurer que le logger est fermé à la sortie de l'application
+
 	configDir, err := GetConfigDir()
 	if (err != nil) {
+		LogError("Impossible de créer le répertoire de configuration: %v", err)
 		return fmt.Errorf("impossible de créer le répertoire de configuration: %w", err)
 	}
 
@@ -95,12 +127,14 @@ func InitApp() error {
 	
 	// Créer le répertoire des métadonnées de sauvegarde
 	if err := os.MkdirAll(BackupInfoDir, 0755); err != nil {
+		LogError("Impossible de créer le répertoire des métadonnées: %v", err)
 		return fmt.Errorf("impossible de créer le répertoire des métadonnées: %w", err)
 	}
 
 	// Créer un répertoire temporaire
 	tmpDir, err := GetTempDir()
 	if err != nil {
+		LogError("Impossible de créer le répertoire temporaire: %v", err)
 		return fmt.Errorf("impossible de créer le répertoire temporaire: %w", err)
 	}
 	TempDir = tmpDir
@@ -111,6 +145,7 @@ func InitApp() error {
 
 	// Vérifier si la configuration existe, sinon créer une configuration par défaut
 	if !FileExists(ConfigFile) {
+		LogInfo("Fichier de configuration non trouvé. Création d'une configuration par défaut.")
 		defaultConfig := Config{
 			BackupDirs: []BackupConfig{},
 			BackupDestination: filepath.Join(configDir, "backups"),
@@ -130,18 +165,22 @@ func InitApp() error {
 		}
 		
 		if err := SaveConfig(defaultConfig); err != nil {
+			LogError("Impossible de créer la configuration par défaut: %v", err)
 			return fmt.Errorf("impossible de créer la configuration par défaut: %w", err)
 		}
+		LogInfo("Configuration par défaut créée avec succès.")
 	}
 
 	// Charger la configuration
 	config, err := LoadConfig()
 	if err != nil {
+		LogError("Impossible de charger la configuration: %v", err)
 		return fmt.Errorf("impossible de charger la configuration: %w", err)
 	}
 	
 	// Migration: si aucune destination n'est définie mais BackupDestination existe
 	if len(config.BackupDestinations) == 0 && config.BackupDestination != "" {
+		LogInfo("Migration de l'ancienne destination de sauvegarde vers le nouveau format.")
 		config.BackupDestinations = []BackupDestination{
 			{
 				Name:      "Default",
@@ -152,11 +191,20 @@ func InitApp() error {
 		}
 		// Sauvegarder la configuration migrée
 		if err := SaveConfig(config); err != nil {
+			LogError("Impossible de migrer la configuration: %v", err)
 			return fmt.Errorf("impossible de migrer la configuration: %w", err)
 		}
+		LogInfo("Migration de la configuration terminée avec succès.")
 	}
 	
+	// SECURITY: Valider la configuration après le chargement
+	if err := config.ValidateConfig(); err != nil {
+		LogSecurity("Configuration invalide détectée: %v", err)
+		return fmt.Errorf("la configuration est invalide: %w", err)
+	}
+
 	AppConfig = config
+	LogInfo("Configuration chargée et validée avec succès.")
 
 	return nil
 }
@@ -167,13 +215,16 @@ func LoadConfig() (Config, error) {
 	
 	data, err := os.ReadFile(ConfigFile)
 	if err != nil {
+		LogError("Impossible de lire le fichier de configuration %s: %v", ConfigFile, err)
 		return config, err
 	}
 	
 	if err := json.Unmarshal(data, &config); err != nil {
+		LogError("Impossible de désérialiser le fichier de configuration %s: %v", ConfigFile, err)
 		return config, err
 	}
 	
+	LogInfo("Configuration chargée depuis %s.", ConfigFile)
 	return config, nil
 }
 
@@ -181,16 +232,28 @@ func LoadConfig() (Config, error) {
 func SaveConfig(config Config) error {
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
+		LogError("Impossible de sérialiser la configuration: %v", err)
 		return err
 	}
 	
-	return os.WriteFile(ConfigFile, data, 0644)
+	// SECURITY: Restreindre les permissions du fichier de configuration
+	if err := os.WriteFile(ConfigFile, data, 0600); err != nil {
+		LogError("Impossible d'écrire le fichier de configuration %s: %v", ConfigFile, err)
+		return err
+	}
+	LogSecurity("Configuration sauvegardée dans %s avec des permissions restreintes (0600).", ConfigFile)
+	return nil
 }
 
 // AddBackupDirectory ajoute un répertoire à sauvegarder à la configuration
 func AddBackupDirectory(config BackupConfig) error {
 	AppConfig.BackupDirs = append(AppConfig.BackupDirs, config)
-	return SaveConfig(AppConfig)
+	if err := SaveConfig(AppConfig); err != nil {
+		LogError("Impossible d'ajouter le répertoire de sauvegarde '%s': %v", config.Name, err)
+		return err
+	}
+	LogSecurity("Répertoire de sauvegarde '%s' ajouté à la configuration.", config.Name)
+	return nil
 }
 
 // GetBackupConfig récupère la configuration d'un répertoire de sauvegarde par son nom
@@ -224,7 +287,12 @@ func AddBackupDestination(dest BackupDestination) error {
 		AppConfig.BackupDestination = dest.Path
 	}
 	
-	return SaveConfig(AppConfig)
+	if err := SaveConfig(AppConfig); err != nil {
+		LogError("Impossible d'ajouter la destination de sauvegarde '%s': %v", dest.Name, err)
+		return err
+	}
+	LogSecurity("Destination de sauvegarde '%s' ajoutée à la configuration.", dest.Name)
+	return nil
 }
 
 // GetDefaultBackupDestination récupère la destination de sauvegarde par défaut
@@ -291,10 +359,15 @@ func DeleteBackupDestination(name string) error {
 				AppConfig.BackupDestination = AppConfig.BackupDestinations[0].Path
 			}
 			
-			return SaveConfig(AppConfig)
+			if err := SaveConfig(AppConfig); err != nil {
+				LogError("Impossible de supprimer la destination de sauvegarde '%s': %v", name, err)
+				return err
+			}
+			LogSecurity("Destination de sauvegarde '%s' supprimée de la configuration.", name)
+			return nil
 		}
 	}
-	
+	LogError("Destination de sauvegarde '%s' non trouvée pour suppression.", name)
 	return fmt.Errorf("destination de sauvegarde '%s' non trouvée", name)
 }
 
@@ -303,10 +376,17 @@ func SaveBackupInfo(info BackupInfo) error {
 	filename := filepath.Join(BackupInfoDir, info.ID+".json")
 	data, err := json.MarshalIndent(info, "", "  ")
 	if err != nil {
+		LogError("Impossible de sérialiser les informations de sauvegarde pour '%s': %v", info.ID, err)
 		return err
 	}
 	
-	return os.WriteFile(filename, data, 0644)
+	// SECURITY: Restreindre les permissions du fichier de métadonnées
+	if err := os.WriteFile(filename, data, 0600); err != nil {
+		LogError("Impossible d'écrire le fichier de métadonnées %s: %v", filename, err)
+		return err
+	}
+	LogInfo("Informations de sauvegarde pour '%s' sauvegardées dans %s.", info.ID, filename)
+	return nil
 }
 
 // ListBackups liste toutes les sauvegardes disponibles
@@ -315,6 +395,7 @@ func ListBackups() ([]BackupInfo, error) {
 	
 	files, err := os.ReadDir(BackupInfoDir)
 	if err != nil {
+		LogError("Impossible de lire le répertoire des métadonnées %s: %v", BackupInfoDir, err)
 		return nil, err
 	}
 	
@@ -322,18 +403,20 @@ func ListBackups() ([]BackupInfo, error) {
 		if !file.IsDir() && filepath.Ext(file.Name()) == ".json" {
 			data, err := os.ReadFile(filepath.Join(BackupInfoDir, file.Name()))
 			if err != nil {
+				LogError("Impossible de lire le fichier de métadonnées %s: %v", file.Name(), err)
 				continue
 			}
 			
 			var info BackupInfo
 			if err := json.Unmarshal(data, &info); err != nil {
+				LogError("Impossible de désérialiser le fichier de métadonnées %s: %v", file.Name(), err)
 				continue
 			}
 			
 			backups = append(backups, info)
 		}
 	}
-	
+	LogInfo("%d sauvegardes disponibles listées.", len(backups))
 	return backups, nil
 }
 
@@ -341,6 +424,7 @@ func ListBackups() ([]BackupInfo, error) {
 func AddRsyncServer(server RsyncServerConfig) error {
 	err := ensureConfigLoaded()
 	if err != nil {
+		LogError("Impossible de charger la configuration pour ajouter un serveur rsync: %v", err)
 		return err
 	}
 
@@ -349,19 +433,30 @@ func AddRsyncServer(server RsyncServerConfig) error {
 		if s.Name == server.Name {
 			// Mise à jour du serveur existant
 			AppConfig.RsyncServers[i] = server
-			return SaveConfig(AppConfig)
+			if err := SaveConfig(AppConfig); err != nil {
+				LogError("Impossible de mettre à jour le serveur rsync '%s': %v", server.Name, err)
+				return err
+			}
+			LogSecurity("Serveur rsync '%s' mis à jour dans la configuration.", server.Name)
+			return nil
 		}
 	}
 
 	// Ajouter le nouveau serveur
 	AppConfig.RsyncServers = append(AppConfig.RsyncServers, server)
-	return SaveConfig(AppConfig)
+	if err := SaveConfig(AppConfig); err != nil {
+		LogError("Impossible d'ajouter le serveur rsync '%s': %v", server.Name, err)
+		return err
+	}
+	LogSecurity("Serveur rsync '%s' ajouté à la configuration.", server.Name)
+	return nil
 }
 
 // GetRsyncServers retourne la liste des serveurs rsync configurés
 func GetRsyncServers() ([]RsyncServerConfig, error) {
 	err := ensureConfigLoaded()
 	if err != nil {
+		LogError("Impossible de charger la configuration pour récupérer les serveurs rsync: %v", err)
 		return nil, err
 	}
 
@@ -380,7 +475,7 @@ func GetRsyncServer(name string) (*RsyncServerConfig, error) {
 			return &server, nil
 		}
 	}
-
+	LogError("Serveur rsync '%s' non trouvé.", name)
 	return nil, fmt.Errorf("serveur rsync '%s' non trouvé", name)
 }
 
@@ -388,6 +483,7 @@ func GetRsyncServer(name string) (*RsyncServerConfig, error) {
 func DeleteRsyncServer(name string) error {
 	err := ensureConfigLoaded()
 	if err != nil {
+		LogError("Impossible de charger la configuration pour supprimer un serveur rsync: %v", err)
 		return err
 	}
 
@@ -395,10 +491,15 @@ func DeleteRsyncServer(name string) error {
 		if server.Name == name {
 			// Suppression du serveur
 			AppConfig.RsyncServers = append(AppConfig.RsyncServers[:i], AppConfig.RsyncServers[i+1:]...)
-			return SaveConfig(AppConfig)
+			if err := SaveConfig(AppConfig); err != nil {
+				LogError("Impossible de supprimer le serveur rsync '%s': %v", name, err)
+				return err
+			}
+			LogSecurity("Serveur rsync '%s' supprimé de la configuration.", name)
+			return nil
 		}
 	}
-
+	LogError("Serveur rsync '%s' non trouvé pour suppression.", name)
 	return fmt.Errorf("serveur rsync '%s' non trouvé", name)
 }
 
@@ -408,6 +509,7 @@ func ensureConfigLoaded() error {
 	if len(AppConfig.BackupDirs) == 0 && len(AppConfig.BackupDestinations) == 0 && AppConfig.BackupDestination == "" {
 		config, err := LoadConfig()
 		if err != nil {
+			LogError("Impossible de charger la configuration dans ensureConfigLoaded: %v", err)
 			return fmt.Errorf("impossible de charger la configuration: %w", err)
 		}
 		AppConfig = config
@@ -415,11 +517,70 @@ func ensureConfigLoaded() error {
 	return nil
 }
 
+func (sc *SecurityConfig) IsPathAllowed(path string) bool {
+	// Si aucune restriction n'est définie, tous les chemins sont autorisés.
+	if len(sc.AllowedBackupPaths) == 0 {
+		LogInfo("Aucune restriction de chemin de sauvegarde définie. Chemin '%s' autorisé par défaut.", path)
+		return true
+	}
+
+	// Nettoyer le chemin à vérifier
+	cleanPath := filepath.Clean(path)
+
+	// Vérifier si le chemin est un sous-répertoire d'un des chemins autorisés.
+	for _, allowedPath := range sc.AllowedBackupPaths {
+		cleanAllowedPath := filepath.Clean(allowedPath)
+		if strings.HasPrefix(cleanPath, cleanAllowedPath) {
+			LogInfo("Chemin de sauvegarde '%s' autorisé car il est sous '%s'.", path, allowedPath)
+			return true
+		}
+	}
+	LogSecurity("Chemin de sauvegarde '%s' bloqué car non autorisé.", path)
+	return false
+}
+
+// ValidateConfig vérifie la validité de la configuration chargée.
+func (c *Config) ValidateConfig() error {
+	LogInfo("Validation de la configuration...")
+	for _, dir := range c.BackupDirs {
+		if !IsValidName(dir.Name) {
+			LogError("Nom de configuration de sauvegarde invalide: %s", dir.Name)
+			return fmt.Errorf("nom de configuration de sauvegarde invalide: %s", dir.Name)
+		}
+		if !IsValidPath(dir.SourcePath) {
+			LogError("Chemin source invalide dans la configuration '%s': %s", dir.Name, dir.SourcePath)
+			return fmt.Errorf("chemin source invalide dans la configuration '%s': %s", dir.Name, dir.SourcePath)
+		}
+	}
+
+	for _, dest := range c.BackupDestinations {
+		if !IsValidName(dest.Name) {
+			LogError("Nom de destination invalide: %s", dest.Name)
+			return fmt.Errorf("nom de destination invalide: %s", dest.Name)
+		}
+		if !IsValidPath(dest.Path) {
+			LogError("Chemin de destination invalide pour '%s': %s", dest.Name, dest.Path)
+			return fmt.Errorf("chemin de destination invalide pour '%s': %s", dest.Name, dest.Path)
+		}
+	}
+
+	for _, server := range c.RsyncServers {
+		if !IsValidName(server.Name) {
+			LogError("Nom de serveur rsync invalide: %s", server.Name)
+			return fmt.Errorf("nom de serveur rsync invalide: %s", server.Name)
+		}
+	}
+	LogInfo("Configuration validée avec succès.")
+	return nil
+}
+
 // DeleteBackup supprime une sauvegarde par son ID
 func DeleteBackup(id string) error {
+	LogSecurity("Tentative de suppression de la sauvegarde avec ID: %s", id)
 	// Chercher la sauvegarde
 	backups, err := ListBackups()
 	if err != nil {
+		LogError("Impossible de récupérer la liste des sauvegardes pour suppression: %v", err)
 		return fmt.Errorf("impossible de récupérer la liste des sauvegardes: %w", err)
 	}
 	
@@ -434,6 +595,7 @@ func DeleteBackup(id string) error {
 	}
 	
 	if !found {
+		LogWarning("Sauvegarde avec ID %s non trouvée pour suppression.", id)
 		return fmt.Errorf("sauvegarde avec ID %s non trouvée", id)
 	}
 	
@@ -443,21 +605,30 @@ func DeleteBackup(id string) error {
 		if FileExists(backup.BackupPath) {
 			// Si c'est un fichier (sauvegarde compressée)
 			if err := os.Remove(backup.BackupPath); err != nil {
+				LogError("Impossible de supprimer le fichier de sauvegarde %s: %v", backup.BackupPath, err)
 				return fmt.Errorf("impossible de supprimer le fichier de sauvegarde %s: %w", backup.BackupPath, err)
 			}
+			LogSecurity("Fichier de sauvegarde local %s supprimé.", backup.BackupPath)
 		} else if DirExists(backup.BackupPath) {
 			// Si c'est un répertoire (sauvegarde non compressée)
 			if err := os.RemoveAll(backup.BackupPath); err != nil {
+				LogError("Impossible de supprimer le répertoire de sauvegarde %s: %v", backup.BackupPath, err)
 				return fmt.Errorf("impossible de supprimer le répertoire de sauvegarde %s: %w", backup.BackupPath, err)
 			}
+			LogSecurity("Répertoire de sauvegarde local %s supprimé.", backup.BackupPath)
 		}
+	} else {
+		LogInfo("La sauvegarde '%s' est distante, la suppression du fichier distant doit être gérée manuellement.", backup.ID)
 	}
 	
 	// Supprimer le fichier de métadonnées
 	metaPath := filepath.Join(BackupInfoDir, id+".json")
 	if err := os.Remove(metaPath); err != nil {
+		LogError("Impossible de supprimer le fichier de métadonnées %s: %v", metaPath, err)
 		return fmt.Errorf("impossible de supprimer le fichier de métadonnées %s: %w", metaPath, err)
 	}
+	LogSecurity("Fichier de métadonnées %s supprimé.", metaPath)
 	
+	LogSecurity("Sauvegarde avec ID %s supprimée avec succès.", id)
 	return nil
 }

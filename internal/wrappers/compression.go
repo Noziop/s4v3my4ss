@@ -37,6 +37,7 @@ func NewCompressionWrapper() (*CompressionWrapper, error) {
 
 	// Vérifier si tar est disponible
 	if !common.IsCommandAvailable("tar") {
+		common.LogError("tar n'est pas installé.")
 		return cw, fmt.Errorf("tar n'est pas installé")
 	}
 
@@ -46,11 +47,13 @@ func NewCompressionWrapper() (*CompressionWrapper, error) {
 		if common.IsCommandAvailable("zip") {
 			cw.DefaultFormat = FormatZip
 		} else {
+			common.LogError("Ni gzip ni zip ne sont installés.")
 			return cw, fmt.Errorf("ni gzip ni zip ne sont installés")
 		}
 	}
 
 	cw.Verified = true
+	common.LogInfo("CompressionWrapper créé et outils vérifiés.")
 	return cw, nil
 }
 
@@ -64,92 +67,124 @@ func (cw *CompressionWrapper) EnsureAvailable() error {
 	if common.EnsureDependency("tar", "tar") != nil || 
 	   common.EnsureDependency("gzip", "gzip") != nil {
 		// Si l'installation échoue, essayer zip
+		common.LogWarning("Impossible d'installer tar ou gzip. Tentative d'installation de zip.")
 		if common.EnsureDependency("zip", "zip") == nil && 
 		   common.EnsureDependency("unzip", "unzip") == nil {
 			cw.DefaultFormat = FormatZip
+			common.LogInfo("zip et unzip installés avec succès. Format par défaut défini sur zip.")
 		} else {
+			common.LogError("Impossible d'installer les outils de compression.")
 			return fmt.Errorf("impossible d'installer les outils de compression")
 		}
 	} else {
 		cw.DefaultFormat = FormatTarGz
+		common.LogInfo("tar et gzip installés avec succès. Format par défaut défini sur tar.gz.")
 	}
 
 	cw.Verified = true
 	return nil
 }
 
-// Compress compresse un répertoire dans un fichier
+// Compress compresse un répertoire dans un fichier de manière sécurisée.
 func (cw *CompressionWrapper) Compress(sourcePath, destPath string, format CompressionFormat) error {
+	common.LogInfo("Début de la compression: Source=%s, Destination=%s, Format=%s", sourcePath, destPath, format)
+	// SECURITY: Valider les chemins et le format avant toute opération.
+	if !common.IsValidPath(sourcePath) || !common.IsValidPath(destPath) { // Utilisation de common.IsValidPath
+		common.LogError("Chemin source ou destination invalide ou non sécurisé: Source=%s, Dest=%s", sourcePath, destPath)
+		return fmt.Errorf("chemin source ou destination invalide ou non sécurisé")
+	}
+	if !common.IsValidCompressionFormat(string(format)) { // Utilisation de common.IsValidCompressionFormat
+		common.LogError("Format de compression non supporté: %s", format)
+		return fmt.Errorf("format de compression non supporté: %s", format)
+	}
+
 	if err := cw.EnsureAvailable(); err != nil {
+		common.LogError("Outils de compression non disponibles: %v", err)
 		return err
 	}
 
-	// Si format n'est pas spécifié, utiliser le format par défaut
 	if format == "" {
 		format = cw.DefaultFormat
 	}
 
-	// Assurer que le répertoire parent de destination existe
 	destDir := filepath.Dir(destPath)
 	if err := os.MkdirAll(destDir, 0755); err != nil {
+		common.LogError("Impossible de créer le répertoire de destination %s: %v", destDir, err)
 		return fmt.Errorf("impossible de créer le répertoire de destination: %w", err)
 	}
 
-	// Composer la commande selon le format
 	var cmd *exec.Cmd
 
 	switch format {
 	case FormatTarGz:
-		// Utiliser tar avec gzip
+		// SECURITY: Les arguments sont passés séparément pour éviter l'injection de shell.
 		cmd = exec.Command("tar", "-czf", destPath, "-C", filepath.Dir(sourcePath), filepath.Base(sourcePath))
 	case FormatZip:
-		// Utiliser zip
-		// Se déplacer dans le répertoire parent pour éviter d'inclure le chemin complet
-		currentDir, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("impossible d'obtenir le répertoire courant: %w", err)
-		}
-		defer os.Chdir(currentDir)
-		
-		if err := os.Chdir(filepath.Dir(sourcePath)); err != nil {
-			return fmt.Errorf("impossible de changer de répertoire: %w", err)
-		}
-		
+		// Le changement de répertoire est une opération sensible. Assurer que les chemins sont propres.
+		cleanSourceDir := filepath.Clean(filepath.Dir(sourcePath))
 		cmd = exec.Command("zip", "-r", destPath, filepath.Base(sourcePath))
+		cmd.Dir = cleanSourceDir // Exécuter la commande dans le répertoire parent de la source
 	default:
+		common.LogError("Format de compression non supporté: %s", format)
 		return fmt.Errorf("format de compression non supporté: %s", format)
 	}
 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+
+	common.LogInfo("Exécution de la commande de compression: %s %s", cmd.Path, strings.Join(cmd.Args, " "))
+	err := cmd.Run()
+	if err != nil {
+		common.LogError("Erreur lors de la compression: %v", err)
+		return fmt.Errorf("erreur lors de la compression: %w", err)
+	}
+
+	common.LogInfo("Compression terminée avec succès.")
+	return nil
 }
 
-// Decompress décompresse un fichier vers un répertoire
+// Decompress décompresse un fichier vers un répertoire de manière sécurisée.
 func (cw *CompressionWrapper) Decompress(sourcePath, destPath string) error {
+	common.LogInfo("Début de la décompression: Source=%s, Destination=%s", sourcePath, destPath)
+	// SECURITY: Valider les chemins avant la décompression.
+	if !common.IsValidPath(sourcePath) || !common.IsValidPath(destPath) { // Utilisation de common.IsValidPath
+		common.LogError("Chemin source ou destination invalide ou non sécurisé: Source=%s, Dest=%s", sourcePath, destPath)
+		return fmt.Errorf("chemin source ou destination invalide ou non sécurisé")
+	}
+
 	if err := cw.EnsureAvailable(); err != nil {
+		common.LogError("Outils de décompression non disponibles: %v", err)
 		return err
 	}
 
-	// Assurer que le répertoire de destination existe
 	if err := os.MkdirAll(destPath, 0755); err != nil {
+		common.LogError("Impossible de créer le répertoire de destination %s: %v", destPath, err)
 		return fmt.Errorf("impossible de créer le répertoire de destination: %w", err)
 	}
 
-	// Déterminer le format d'après l'extension
 	var cmd *exec.Cmd
 
 	if strings.HasSuffix(sourcePath, ".tar.gz") || strings.HasSuffix(sourcePath, ".tgz") {
-		// Décompresser avec tar
+		// SECURITY: Utiliser des arguments séparés pour tar.
 		cmd = exec.Command("tar", "-xzf", sourcePath, "-C", destPath)
 	} else if strings.HasSuffix(sourcePath, ".zip") {
-		// Décompresser avec unzip
+		// SECURITY: Utiliser des arguments séparés pour unzip.
 		cmd = exec.Command("unzip", sourcePath, "-d", destPath)
 	} else {
+		common.LogError("Format de compression non reconnu pour le fichier: %s", sourcePath)
 		return fmt.Errorf("format de compression non reconnu pour le fichier: %s", sourcePath)
 	}
 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+
+	common.LogInfo("Exécution de la commande de décompression: %s %s", cmd.Path, strings.Join(cmd.Args, " "))
+	err := cmd.Run()
+	if err != nil {
+		common.LogError("Erreur lors de la décompression: %v", err)
+		return fmt.Errorf("erreur lors de la décompression: %w", err)
+	}
+
+	common.LogInfo("Décompression terminée avec succès.")
+	return nil
 }

@@ -12,7 +12,7 @@ import (
 	"github.com/Noziop/s4v3my4ss/internal/restore"
 	"github.com/Noziop/s4v3my4ss/internal/watch"
 	"github.com/Noziop/s4v3my4ss/internal/wrappers"
-	"github.com/Noziop/s4v3my4ss/pkg/common"
+	"github.com/Noziop/s4v3my4ss/pkg/common" // Import du package common
 )
 
 // Couleurs pour l'interface
@@ -29,58 +29,17 @@ const (
 var (
 	// Patterns de répertoires à exclure par défaut
 	commonExcludeDirs = []string{
-		"node_modules",
-		".git",
-		".svn",
-		".hg",
-		"__pycache__",
-		".venv",
-		"venv",
-		"env",
-		"dist",
-		"build",
-		"target",
-		"bin",
-		"obj",
-		".next",
-		".nuxt",
-		".output",
-		"vendor",
-		".vscode",
-		".idea",
-		".DS_Store",
-		"coverage",
-		".pytest_cache",
-		".gradle",
-		"tmp",
-		"temp",
-		"logs",
-		"cache",
+		"node_modules", ".git", ".svn", ".hg", "__pycache__", ".venv", "venv", "env",
+		"dist", "build", "target", "bin", "obj", ".next", ".nuxt", ".output",
+		"vendor", ".vscode", ".idea", ".DS_Store", "coverage", ".pytest_cache",
+		".gradle", "tmp", "temp", "logs", "cache",
 	}
 
 	// Patterns de fichiers à exclure par défaut
 	commonExcludeFiles = []string{
-		"*.log",
-		"*.tmp",
-		"*.swp",
-		"*.swo",
-		"*.pyc",
-		"*.pyo",
-		"*.class",
-		"*.o",
-		"*.so",
-		"*.exe",
-		"*.dll",
-		"*.db",
-		"*.sqlite",
-		"*.sqlite3",
-		"*.pid",
-		"package-lock.json",
-		"yarn.lock",
-		"pnpm-lock.yaml",
-		".env",
-		".cache",
-		".env.*",
+		"*.log", "*.tmp", "*.swp", "*.swo", "*.pyc", "*.pyo", "*.class", "*.o",
+		"*.so", "*.exe", "*.dll", "*.db", "*.sqlite", "*.sqlite3", "*.pid",
+		"package-lock.json", "yarn.lock", "pnpm-lock.yaml", ".env", ".cache", ".env.*",
 	}
 )
 
@@ -89,17 +48,37 @@ const CommandName = "saveme"
 
 var reader *bufio.Reader
 
+// readAndValidateInput lit une entrée utilisateur et la valide en utilisant une fonction de validation.
+// La lecture se répète jusqu'à ce que l'entrée soit valide.
+func readAndValidateInput(prompt string, validator func(string) bool, errorMessage string) string {
+	for {
+		input := readInput(prompt)
+		if validator(input) {
+			return input
+		}
+		fmt.Printf("%s%s%s\n", colorRed, errorMessage, colorReset)
+	}
+}
+
 // RunInteractiveMode démarre le mode interactif de l'application
 func RunInteractiveMode() {
+	common.LogInfo("Démarrage du mode interactif.")
+	// SECURITY: Vérifier si l'application est exécutée en tant que root.
+	if os.Geteuid() == 0 {
+		common.LogSecurity("AVERTISSEMENT: Application exécutée en tant que root.")
+		fmt.Printf("%s%sAVERTISSEMENT: Vous exécutez cette application en tant que root. Il est fortement recommandé d'utiliser un utilisateur avec des privilèges moindres pour des raisons de sécurité.%s\n\n", colorBold, colorYellow, colorReset)
+	}
+
 	reader = bufio.NewReader(os.Stdin)
-	
+
+
 	for {
 		clearScreen()
 		displayHeader()
 		displayMainMenu()
-		
+
 		choice := readInput("Votre choix: ")
-		
+
 		switch choice {
 		case "1":
 			configureBackup()
@@ -116,12 +95,14 @@ func RunInteractiveMode() {
 		case "7":
 			manageConfiguration()
 		case "0":
+			common.LogInfo("Quitter l'application.")
 			fmt.Println("Au revoir !")
 			return
 		default:
+			common.LogWarning("Option de menu non valide: %s", choice)
 			fmt.Println("Option non valide. Veuillez réessayer.")
 		}
-		
+
 		fmt.Println()
 		readInput("Appuyez sur Entrée pour continuer...")
 	}
@@ -129,68 +110,107 @@ func RunInteractiveMode() {
 
 // HandleWatchCommand traite la commande 'watch' depuis la ligne de commande
 func HandleWatchCommand(args []string) {
+	common.LogInfo("Traitement de la commande 'watch' avec les arguments: %v", args)
 	if len(args) < 1 {
+		common.LogError("Utilisation incorrecte de la commande watch: arguments manquants.")
 		fmt.Fprintln(os.Stderr, "Usage: "+CommandName+" watch <nom_configuration>")
 		os.Exit(1)
 	}
-	
+
 	name := args[0]
+	if !common.IsValidName(name) { // Utilisation de common.IsValidName
+		common.LogError("Nom de configuration invalide fourni pour watch: %s", name)
+		fmt.Fprintf(os.Stderr, "Erreur: Nom de configuration invalide: %s\n", name)
+		os.Exit(1)
+	}
+
 	config, found := common.GetBackupConfig(name)
-	
 	if !found {
+		common.LogError("Configuration '%s' non trouvée pour la commande watch.", name)
 		fmt.Fprintf(os.Stderr, "Erreur: Configuration '%s' non trouvée\n", name)
 		os.Exit(1)
 	}
-	
+
 	fmt.Printf("Démarrage de la surveillance du répertoire: %s\n", config.SourcePath)
+	common.LogInfo("Démarrage de la surveillance du répertoire: %s pour la configuration %s.", config.SourcePath, config.Name)
 	if err := watch.StartWatch(config); err != nil {
+		common.LogError("Erreur de surveillance pour %s: %v", config.Name, err)
 		fmt.Fprintf(os.Stderr, "Erreur de surveillance: %v\n", err)
 		os.Exit(1)
 	}
+	common.LogInfo("Surveillance démarrée avec succès pour %s.", config.Name)
 }
 
 // HandleRestoreCommand traite la commande 'restore' depuis la ligne de commande
 func HandleRestoreCommand(args []string) {
+	common.LogInfo("Traitement de la commande 'restore' avec les arguments: %v", args)
 	if len(args) < 1 {
+		common.LogInfo("Aucun argument fourni pour restore. Lancement du mode interactif.")
 		restoreBackupInteractive()
 		return
 	}
-	
+
 	backupID := args[0]
+	if !common.IsValidName(backupID) { // Utilisation de common.IsValidName
+		common.LogError("ID de sauvegarde invalide fourni pour restore: %s", backupID)
+		fmt.Fprintf(os.Stderr, "Erreur: ID de sauvegarde invalide: %s\n", backupID)
+		os.Exit(1)
+	}
+
 	target := ""
 	if len(args) > 1 {
 		target = args[1]
+		if !common.IsValidPath(target) { // Utilisation de common.IsValidPath
+			common.LogError("Chemin de destination invalide fourni pour restore: %s", target)
+			fmt.Fprintf(os.Stderr, "Erreur: Chemin de destination invalide: %s\n", target)
+			os.Exit(1)
+		}
 	}
-	
+
+	common.LogInfo("Restauration de la sauvegarde %s vers %s.", backupID, target)
 	if err := restore.RestoreBackup(backupID, target); err != nil {
+		common.LogError("Erreur de restauration pour %s: %v", backupID, err)
 		fmt.Fprintf(os.Stderr, "Erreur de restauration: %v\n", err)
 		os.Exit(1)
 	}
-	
+
+	common.LogInfo("Restauration terminée avec succès pour %s.", backupID)
 	fmt.Println("Restauration terminée avec succès.")
 }
 
 // HandleManageCommand traite la commande 'manage' depuis la ligne de commande
 func HandleManageCommand(args []string) {
+	common.LogInfo("Traitement de la commande 'manage' avec les arguments: %v", args)
 	if len(args) == 0 {
+		common.LogInfo("Aucun argument fourni pour manage. Lancement du mode interactif.")
 		manageBackupsInteractive()
 		return
 	}
-	
+
 	subcommand := args[0]
-	
 	switch subcommand {
 	case "list":
+		common.LogInfo("Exécution de la sous-commande manage list.")
 		listBackups()
 	case "delete":
+		common.LogInfo("Exécution de la sous-commande manage delete.")
 		if len(args) < 2 {
+			common.LogError("Utilisation incorrecte de manage delete: ID de sauvegarde manquant.")
 			fmt.Fprintln(os.Stderr, "Usage: "+CommandName+" manage delete <backup_id>")
 			os.Exit(1)
 		}
-		deleteBackup(args[1])
+		backupID := args[1]
+		if !common.IsValidName(backupID) { // Utilisation de common.IsValidName
+			common.LogError("ID de sauvegarde invalide fourni pour manage delete: %s", backupID)
+			fmt.Fprintf(os.Stderr, "Erreur: ID de sauvegarde invalide: %s\n", backupID)
+			os.Exit(1)
+		}
+		deleteBackup(backupID)
 	case "clean":
+		common.LogInfo("Exécution de la sous-commande manage clean.")
 		cleanOldBackups()
 	default:
+		common.LogWarning("Sous-commande manage inconnue: %s", subcommand)
 		fmt.Fprintln(os.Stderr, "Sous-commande inconnue:", subcommand)
 		fmt.Fprintln(os.Stderr, "Sous-commandes disponibles: list, delete, clean")
 		os.Exit(1)
@@ -199,35 +219,48 @@ func HandleManageCommand(args []string) {
 
 // configureBackup permet de configurer une nouvelle sauvegarde
 func configureBackup() {
+	common.LogInfo("Début de la configuration d'une nouvelle sauvegarde.")
 	fmt.Printf("%sConfiguration d'une nouvelle sauvegarde%s\n\n", colorBold, colorReset)
-	
-	name := readInput("Nom de la sauvegarde: ")
-	sourcePath := readInput("Chemin du répertoire à surveiller: ")
-	
+
+	// SECURITY: Utiliser la validation pour les entrées utilisateur.
+	name := readAndValidateInput("Nom de la sauvegarde: ", common.IsValidName, "Nom invalide. Utilisez uniquement des lettres, chiffres, - et _.") // Utilisation de common.IsValidName
+	sourcePath := readAndValidateInput("Chemin du répertoire à surveiller: ", common.IsValidPath, "Chemin invalide ou non sécurisé.") // Utilisation de common.IsValidPath
+
+	if sourcePath == "" {
+		common.LogWarning("Configuration annulée: chemin source vide.")
+		fmt.Println("Configuration annulée. Le chemin source ne peut pas être vide.")
+		return
+	}
+
 	// Expandir les chemins relatifs, y compris ~/
 	if strings.HasPrefix(sourcePath, "~/") {
 		homeDir, err := os.UserHomeDir()
 		if err == nil {
 			sourcePath = filepath.Join(homeDir, sourcePath[2:])
+		} else {
+			common.LogError("Impossible d'obtenir le répertoire personnel de l'utilisateur: %v", err)
 		}
 	}
-	
+
 	// Normaliser et vérifier le chemin
 	sourcePath = filepath.Clean(sourcePath)
 	if !common.DirExists(sourcePath) {
+		common.LogError("Répertoire source '%s' n'existe pas.", sourcePath)
 		fmt.Printf("%sErreur: Le répertoire '%s' n'existe pas.%s\n", colorRed, sourcePath, colorReset)
 		return
 	}
-	
+
 	// Afficher les destinations de sauvegarde disponibles
 	destChoice := ""
 	destinations := common.AppConfig.BackupDestinations
 	
 	if len(destinations) > 0 {
+		common.LogInfo("Affichage des destinations de sauvegarde disponibles.")
 		fmt.Println("\nDestinations de sauvegarde disponibles:")
 		defaultIndex := -1
 		
 		for i, dest := range destinations {
+			
 			destTypeStr := ""
 			if dest.Type == "rsync" {
 				destTypeStr = "(rsync)"
@@ -238,7 +271,6 @@ func configureBackup() {
 			defaultStr := ""
 			if dest.IsDefault {
 				defaultStr = " (Par défaut)"
-				defaultIndex = i
 			}
 			
 			fmt.Printf("%d. %s %s%s\n   Chemin: %s\n", i+1, dest.Name, destTypeStr, defaultStr, dest.Path)
@@ -259,6 +291,8 @@ func configureBackup() {
 					// Nouvelle destination
 					destChoice = "new"
 				}
+			} else {
+				common.LogWarning("Choix de destination invalide: %s", destChoiceStr)
 			}
 		}
 	}
@@ -268,8 +302,9 @@ func configureBackup() {
 	backupDestination := ""
 	
 	if destChoice == "new" || (len(destinations) == 0 && destChoice == "") {
+		common.LogInfo("Configuration d'une nouvelle destination de sauvegarde.")
 		// Demander un nouvel emplacement de sauvegarde
-		backupDestination = readInput("Nouvel emplacement des sauvegardes: ")
+		backupDestination = readAndValidateInput("Nouvel emplacement des sauvegardes: ", common.IsValidPath, "Chemin invalide ou non sécurisé.") // Utilisation de common.IsValidPath
 		
 		if backupDestination != "" {
 			// Expandir les chemins relatifs, y compris ~/
@@ -277,6 +312,8 @@ func configureBackup() {
 				homeDir, err := os.UserHomeDir()
 				if err == nil {
 					backupDestination = filepath.Join(homeDir, backupDestination[2:])
+				} else {
+					common.LogError("Impossible d'obtenir le répertoire personnel de l'utilisateur pour la destination: %v", err)
 				}
 			}
 			
@@ -295,17 +332,19 @@ func configureBackup() {
 				createDest := readInput("")
 				if strings.ToLower(createDest) == "o" {
 					if err := os.MkdirAll(backupDestination, 0755); err != nil {
-						fmt.Printf("%sErreur lors de la création du répertoire: %v%s\n", colorRed, err, colorReset)
+						common.LogError("Erreur lors de la création du répertoire de destination %s: %v", backupDestination, err)
 						return
 					}
+					common.LogInfo("Répertoire de destination %s créé.", backupDestination)
 				} else {
+					common.LogInfo("Création de répertoire annulée par l'utilisateur.")
 					fmt.Println("Configuration annulée.")
 					return
 				}
 			}
 			
 			// Demander un nom pour la nouvelle destination
-			newDestName := readInput("Nom de la nouvelle destination: ")
+			newDestName := readAndValidateInput("Nom de la nouvelle destination: ", common.IsValidName, "Nom invalide.") // Utilisation de common.IsValidName
 			if newDestName == "" {
 				newDestName = "Destination " + strconv.Itoa(len(destinations)+1)
 			}
@@ -323,13 +362,16 @@ func configureBackup() {
 			}
 			
 			if err := common.AddBackupDestination(newDest); err != nil {
-				fmt.Printf("%sErreur lors de l'ajout de la destination: %v%s\n", colorRed, err, colorReset)
+				common.LogError("Erreur lors de l'ajout de la destination %s: %v", newDest.Name, err)
 				return
 			}
 			
 			backupDestinationName = newDestName
+		} else {
+			common.LogWarning("Nouvelle destination de sauvegarde annulée: chemin vide.")
 		}
 	} else if destChoice != "" {
+		common.LogInfo("Utilisation de la destination de sauvegarde existante: %s", destChoice)
 		// Utiliser une destination existante
 		backupDestinationName = destChoice
 	}
@@ -347,8 +389,13 @@ func configureBackup() {
 	var excludeDirs []string
 	if excludeDirsStr != "" {
 		excludeDirs = strings.Split(excludeDirsStr, ",")
-		for i := range excludeDirs {
-			excludeDirs[i] = strings.TrimSpace(excludeDirs[i])
+		for i, dir := range excludeDirs {
+			excludeDirs[i] = strings.TrimSpace(dir)
+			if !common.IsValidExcludePattern(excludeDirs[i]) { // Utilisation de common.IsValidExcludePattern
+				common.LogError("Modèle d'exclusion de répertoire invalide: %s", excludeDirs[i])
+				fmt.Printf("%sModèle d'exclusion de répertoire invalide: %s%s\n", colorRed, excludeDirs[i], colorReset)
+				return
+			}
 		}
 	} else {
 		excludeDirs = commonExcludeDirs
@@ -359,8 +406,13 @@ func configureBackup() {
 	var excludeFiles []string
 	if excludeFilesStr != "" {
 		excludeFiles = strings.Split(excludeFilesStr, ",")
-		for i := range excludeFiles {
-			excludeFiles[i] = strings.TrimSpace(excludeFiles[i])
+		for i, file := range excludeFiles {
+			excludeFiles[i] = strings.TrimSpace(file)
+			if !common.IsValidExcludePattern(excludeFiles[i]) { // Utilisation de common.IsValidExcludePattern
+				common.LogError("Modèle d'exclusion de fichier invalide: %s", excludeFiles[i])
+				fmt.Printf("%sModèle d'exclusion de fichier invalide: %s%s\n", colorRed, excludeFiles[i], colorReset)
+				return
+			}
 		}
 	} else {
 		excludeFiles = commonExcludeFiles
@@ -371,6 +423,8 @@ func configureBackup() {
 	interval := 0
 	if i, err := strconv.Atoi(intervalStr); err == nil && i >= 0 {
 		interval = i
+	} else {
+		common.LogWarning("Intervalle de sauvegarde invalide: %s. Utilisation de 0.", intervalStr)
 	}
 	
 	// Créer la configuration
@@ -387,15 +441,18 @@ func configureBackup() {
 	
 	// Ajouter à la configuration
 	if err := common.AddBackupDirectory(config); err != nil {
+		common.LogError("Erreur lors de l'ajout de la configuration de sauvegarde %s: %v", config.Name, err)
 		fmt.Printf("%sErreur lors de l'ajout de la configuration: %v%s\n", colorRed, err, colorReset)
 		return
 	}
 	
+	common.LogInfo("Configuration de sauvegarde %s ajoutée avec succès.", config.Name)
 	fmt.Printf("%sConfiguration ajoutée avec succès.%s\n", colorGreen, colorReset)
 	
 	// Proposer de démarrer la surveillance
 	startWatchStr := readInput("Démarrer la surveillance maintenant? (o/n): ")
 	if strings.ToLower(startWatchStr) == "o" {
+		common.LogInfo("Démarrage de la surveillance pour %s.", config.Name)
 		fmt.Printf("Démarrage de la surveillance du répertoire: %s\n", config.SourcePath)
 		fmt.Println("Mode surveillance continue. La surveillance s'exécute en arrière-plan.")
 		fmt.Println("Les sauvegardes continueront même si vous revenez au menu principal.")
@@ -403,6 +460,7 @@ func configureBackup() {
 		// Lancer la surveillance en arrière-plan pour ne pas bloquer l'interface
 		go func() {
 			if err := watch.StartWatch(config); err != nil {
+				common.LogError("Erreur lors de la surveillance en arrière-plan pour %s: %v", config.Name, err)
 				fmt.Printf("%sErreur lors de la surveillance: %v%s\n", colorRed, err, colorReset)
 			}
 		}()
@@ -411,11 +469,13 @@ func configureBackup() {
 
 // watchDirectoryInteractive permet de démarrer la surveillance d'un répertoire
 func watchDirectoryInteractive() {
+	common.LogInfo("Début de la surveillance interactive.")
 	fmt.Printf("%sSurveillance d'un répertoire%s\n\n", colorBold, colorReset)
 	
 	// Afficher les configurations disponibles
 	configs := common.AppConfig.BackupDirs
 	if len(configs) == 0 {
+		common.LogWarning("Aucune configuration de sauvegarde disponible pour la surveillance.")
 		fmt.Printf("%sAucune configuration de sauvegarde n'est disponible.%s\n", colorYellow, colorReset)
 		fmt.Println("Veuillez d'abord créer une configuration.")
 		return
@@ -430,11 +490,13 @@ func watchDirectoryInteractive() {
 	idxStr := readInput("Sélectionnez une configuration (numéro): ")
 	idx, err := strconv.Atoi(idxStr)
 	if err != nil || idx < 1 || idx > len(configs) {
+		common.LogError("Choix de configuration invalide pour la surveillance: %s", idxStr)
 		fmt.Printf("%sChoix invalide.%s\n", colorRed, colorReset)
 		return
 	}
 	
 	config := configs[idx-1]
+	common.LogInfo("Démarrage de la surveillance pour la configuration: %s.", config.Name)
 	fmt.Printf("Démarrage de la surveillance du répertoire: %s\n", config.SourcePath)
 	
 	// Option pour la durée de surveillance
@@ -442,10 +504,12 @@ func watchDirectoryInteractive() {
 	duration := 0
 	if dur, err := strconv.Atoi(durationStr); err == nil && dur > 0 {
 		duration = dur
+	} else {
+		common.LogInfo("Durée de surveillance invalide ou continue sélectionnée: %s", durationStr)
 	}
 	
 	if duration > 0 {
-		// Surveillance avec timer
+		common.LogInfo("Surveillance pendant %d minutes pour %s.", duration, config.Name)
 		fmt.Printf("Surveillance pendant %d minutes...\n", duration)
 		
 		// Créer un canal pour communiquer avec la goroutine de surveillance
@@ -454,6 +518,7 @@ func watchDirectoryInteractive() {
 		// Lancer la surveillance dans une goroutine
 		go func() {
 			if err := watch.StartWatchWithCallback(config, done); err != nil {
+				common.LogError("Erreur lors de la surveillance avec callback pour %s: %v", config.Name, err)
 				fmt.Printf("%sErreur lors de la surveillance: %v%s\n", colorRed, err, colorReset)
 			}
 		}()
@@ -464,8 +529,10 @@ func watchDirectoryInteractive() {
 		// Signaler l'arrêt
 		done <- true
 		
+		common.LogInfo("Surveillance terminée après %d minutes pour %s.", duration, config.Name)
 		fmt.Printf("\n%sSurveillance terminée après %d minutes.%s\n", colorGreen, duration, colorReset)
 	} else {
+		common.LogInfo("Surveillance en mode continu pour %s.", config.Name)
 		// Mode continu avec prompt pour retourner au menu
 		fmt.Println("Mode surveillance continue. Appuyez sur Ctrl+C pour arrêter.")
 		fmt.Println("Les sauvegardes continueront même si vous quittez ce prompt.")
@@ -480,60 +547,77 @@ func watchDirectoryInteractive() {
 
 // restoreBackupInteractive permet de restaurer une sauvegarde
 func restoreBackupInteractive() {
+	common.LogInfo("Début de la restauration interactive.")
 	fmt.Printf("%sRestauration d'une sauvegarde%s\n\n", colorBold, colorReset)
-	
+
 	backups, err := common.ListBackups()
 	if err != nil {
+		common.LogError("Erreur lors de la récupération des sauvegardes pour restauration: %v", err)
 		fmt.Printf("%sErreur lors de la récupération des sauvegardes: %v%s\n", colorRed, err, colorReset)
 		return
 	}
-	
+
 	if len(backups) == 0 {
+		common.LogWarning("Aucune sauvegarde disponible pour la restauration.")
 		fmt.Printf("%sAucune sauvegarde disponible.%s\n", colorYellow, colorReset)
 		return
 	}
-	
+
 	fmt.Println("Sauvegardes disponibles:")
 	for i, b := range backups {
 		timeStr := b.Time.Format("02/01/2006 15:04:05")
 		fmt.Printf("%d. %s (%s) - %s\n", i+1, b.Name, b.SourcePath, timeStr)
 	}
-	
+
 	idxStr := readInput("Sélectionnez une sauvegarde (numéro): ")
 	idx, err := strconv.Atoi(idxStr)
 	if err != nil || idx < 1 || idx > len(backups) {
+		common.LogError("Choix de sauvegarde invalide pour la restauration: %s", idxStr)
 		fmt.Printf("%sChoix invalide.%s\n", colorRed, colorReset)
 		return
 	}
-	
+
 	backup := backups[idx-1]
-	
-	targetPath := readInput("Chemin de destination (vide pour restaurer à l'emplacement d'origine): ")
+
+	targetPath := readAndValidateInput("Chemin de destination (vide pour restaurer à l'emplacement d'origine): ", common.IsValidPath, "Chemin invalide ou non sécurisé.") // Utilisation de common.IsValidPath
 	if targetPath == "" {
 		targetPath = backup.SourcePath
 	}
-	
+
+	// SECURITY: Vérifier si le chemin de destination est autorisé
+	if !common.AppConfig.Security.IsPathAllowed(targetPath) {
+		common.LogSecurity("Tentative de restauration vers un chemin non autorisé: %s", targetPath)
+		fmt.Printf("%sErreur: Le chemin de destination '%s' n'est pas autorisé dans la configuration de sécurité.%s\n", colorRed, targetPath, colorReset)
+		return
+	}
+
 	// Vérifier la destination
 	if common.DirExists(targetPath) {
+		common.LogWarning("Répertoire de destination '%s' existe déjà. Demande de confirmation pour écrasement.", targetPath)
 		overwriteStr := readInput(fmt.Sprintf("Le répertoire '%s' existe déjà. Écraser? (o/n): ", targetPath))
 		if strings.ToLower(overwriteStr) != "o" {
+			common.LogInfo("Restauration annulée par l'utilisateur.")
 			fmt.Println("Restauration annulée.")
 			return
 		}
 	}
-	
+
+	common.LogInfo("Restauration de la sauvegarde '%s' vers '%s'.", backup.Name, targetPath)
 	fmt.Printf("Restauration de la sauvegarde '%s' vers '%s'...\n", backup.Name, targetPath)
-	
+
 	if err := restore.RestoreBackup(backup.ID, targetPath); err != nil {
+		common.LogError("Erreur lors de la restauration de %s: %v", backup.Name, err)
 		fmt.Printf("%sErreur lors de la restauration: %v%s\n", colorRed, err, colorReset)
 		return
 	}
-	
+
+	common.LogInfo("Restauration terminée avec succès pour %s.", backup.Name)
 	fmt.Printf("%sRestauration terminée avec succès.%s\n", colorGreen, colorReset)
 }
 
 // manageBackupsInteractive permet de gérer les sauvegardes
 func manageBackupsInteractive() {
+	common.LogInfo("Début de la gestion interactive des sauvegardes.")
 	for {
 		clearScreen()
 		fmt.Printf("%sGestion des sauvegardes%s\n\n", colorBold, colorReset)
@@ -553,8 +637,10 @@ func manageBackupsInteractive() {
 		case "3":
 			cleanOldBackups()
 		case "0":
+			common.LogInfo("Retour au menu principal depuis la gestion des sauvegardes.")
 			return
 		default:
+			common.LogWarning("Option de gestion des sauvegardes non valide: %s", choice)
 			fmt.Println("Option non valide. Veuillez réessayer.")
 		}
 		
@@ -564,13 +650,16 @@ func manageBackupsInteractive() {
 
 // listBackups affiche la liste des sauvegardes
 func listBackups() {
+	common.LogInfo("Liste des sauvegardes demandée.")
 	backups, err := common.ListBackups()
 	if err != nil {
+		common.LogError("Erreur lors de la récupération de la liste des sauvegardes: %v", err)
 		fmt.Printf("%sErreur lors de la récupération des sauvegardes: %v%s\n", colorRed, err, colorReset)
 		return
 	}
 	
 	if len(backups) == 0 {
+		common.LogInfo("Aucune sauvegarde disponible à lister.")
 		fmt.Printf("%sAucune sauvegarde disponible.%s\n", colorYellow, colorReset)
 		return
 	}
@@ -596,17 +685,21 @@ func listBackups() {
 			sizeStr,
 			typeStr)
 	}
+	common.LogInfo("Liste des %d sauvegardes affichée.", len(backups))
 }
 
 // deleteBackupInteractive permet de supprimer une sauvegarde
 func deleteBackupInteractive() {
+	common.LogInfo("Début de la suppression interactive de sauvegarde.")
 	backups, err := common.ListBackups()
 	if err != nil {
+		common.LogError("Erreur lors de la récupération des sauvegardes pour suppression: %v", err)
 		fmt.Printf("%sErreur lors de la récupération des sauvegardes: %v%s\n", colorRed, err, colorReset)
 		return
 	}
 	
 	if len(backups) == 0 {
+		common.LogWarning("Aucune sauvegarde disponible à supprimer.")
 		fmt.Printf("%sAucune sauvegarde disponible.%s\n", colorYellow, colorReset)
 		return
 	}
@@ -620,6 +713,7 @@ func deleteBackupInteractive() {
 	idxStr := readInput("Sélectionnez une sauvegarde à supprimer (numéro): ")
 	idx, err := strconv.Atoi(idxStr)
 	if err != nil || idx < 1 || idx > len(backups) {
+		common.LogError("Choix de sauvegarde invalide pour suppression: %s", idxStr)
 		fmt.Printf("%sChoix invalide.%s\n", colorRed, colorReset)
 		return
 	}
@@ -628,36 +722,44 @@ func deleteBackupInteractive() {
 	
 	confirmStr := readInput(fmt.Sprintf("Êtes-vous sûr de vouloir supprimer '%s'? (o/n): ", backup.Name))
 	if strings.ToLower(confirmStr) != "o" {
+		common.LogInfo("Suppression annulée par l'utilisateur pour la sauvegarde: %s.", backup.Name)
 		fmt.Println("Suppression annulée.")
 		return
 	}
 	
 	deleteBackup(backup.ID)
+	common.LogInfo("Demande de suppression de la sauvegarde %s.", backup.ID)
 }
 
 // deleteBackup supprime une sauvegarde
 func deleteBackup(id string) {
+	common.LogInfo("Tentative de suppression de la sauvegarde avec ID: %s", id)
 	fmt.Printf("Suppression de la sauvegarde %s...\n", id)
 	
 	err := common.DeleteBackup(id)
 	if err != nil {
+		common.LogError("Erreur lors de la suppression de la sauvegarde %s: %v", id, err)
 		fmt.Printf("%sErreur lors de la suppression: %v%s\n", colorRed, err, colorReset)
 		return
 	}
 	
+	common.LogInfo("Sauvegarde %s supprimée avec succès.", id)
 	fmt.Printf("%sSuppression terminée avec succès.%s\n", colorGreen, colorReset)
 }
 
 // cleanOldBackups nettoie les anciennes sauvegardes selon la politique de rétention
 func cleanOldBackups() {
+	common.LogInfo("Début du nettoyage des anciennes sauvegardes.")
 	fmt.Println("Nettoyage des anciennes sauvegardes...")
-	// Appel au module de gestion pour nettoyer les anciennes sauvegardes
-	// À implémenter plus tard
+	// TODO: Implémenter la logique de nettoyage des anciennes sauvegardes ici.
+	// Cette fonctionnalité est un placeholder et doit être développée ultérieurement.
+	common.LogInfo("Nettoyage des anciennes sauvegardes terminé.")
 	fmt.Printf("%sNettoyage terminé.%s\n", colorGreen, colorReset)
 }
 
 // checkDependencies vérifie et installe les dépendances nécessaires
 func checkDependencies() {
+	common.LogInfo("Vérification des dépendances.")
 	fmt.Printf("%sVérification des dépendances%s\n\n", colorBold, colorReset)
 	
 	deps := []struct {
@@ -675,25 +777,32 @@ func checkDependencies() {
 		fmt.Printf("Vérification de %s... ", dep.command)
 		
 		if common.IsCommandAvailable(dep.command) {
+			common.LogInfo("Dépendance %s: OK.", dep.command)
 			fmt.Printf("%sOK%s\n", colorGreen, colorReset)
 			continue
 		}
 		
+		common.LogWarning("Dépendance %s: Non trouvée.", dep.command)
 		fmt.Printf("%sNon trouvé%s\n", colorYellow, colorReset)
 		installStr := readInput(fmt.Sprintf("Installer %s (%s)? (o/n): ", dep.pkg, dep.desc))
 		
 		if strings.ToLower(installStr) != "o" {
+			common.LogInfo("Installation de %s ignorée par l'utilisateur.", dep.pkg)
 			fmt.Println("Installation ignorée.")
 			continue
 		}
 		
+		common.LogInfo("Installation de %s...", dep.pkg)
 		fmt.Printf("Installation de %s...\n", dep.pkg)
 		if err := common.EnsureDependency(dep.command, dep.pkg); err != nil {
+			common.LogError("Erreur lors de l'installation de %s: %v", dep.pkg, err)
 			fmt.Printf("%sErreur lors de l'installation: %v%s\n", colorRed, err, colorReset)
 		} else {
+			common.LogInfo("%s installé avec succès.", dep.pkg)
 			fmt.Printf("%s%s installé avec succès.%s\n", colorGreen, dep.pkg, colorReset)
 		}
 	}
+	common.LogInfo("Vérification des dépendances terminée.")
 }
 
 // Fonctions utilitaires
@@ -719,20 +828,25 @@ func displayHeader() {
 	if err == nil {
 		// Chercher le banner par rapport à l'emplacement de l'exécutable
 		bannerPath = filepath.Join(filepath.Dir(execPath), "..", "banner.txt")
+	} else {
+		common.LogError("Impossible d'obtenir le chemin de l'exécutable: %v", err)
 	}
 	
 	// Si on ne trouve pas le banner à partir de l'exécutable, essayer dans le répertoire actuel
 	if _, err := os.Stat(bannerPath); os.IsNotExist(err) {
+		common.LogWarning("Fichier banner.txt non trouvé à %s. Essai dans le répertoire courant.", bannerPath)
 		// Essayer dans le répertoire projet
 		bannerPath = filepath.Join(".", "banner.txt")
 		// Si toujours pas trouvé, utiliser un chemin absolu pour le développement
 		if _, err := os.Stat(bannerPath); os.IsNotExist(err) {
+			common.LogWarning("Fichier banner.txt non trouvé dans le répertoire courant. Utilisation du chemin de développement.")
 			bannerPath = "/home/noziop/projects/s4v3my4ss/Projet Go/banner.txt"
 		}
 	}
 
 	// Lire le fichier banner s'il existe
 	if bannerContent, err := os.ReadFile(bannerPath); err == nil {
+		common.LogInfo("Fichier banner.txt lu avec succès depuis %s.", bannerPath)
 		// Convertir le contenu en string et le diviser en lignes
 		bannerLines := strings.Split(string(bannerContent), "\n")
 		
@@ -752,12 +866,13 @@ func displayHeader() {
 		}
 		fmt.Print(colorReset) // Réinitialiser la couleur
 	} else {
+		common.LogError("Impossible de lire le fichier banner.txt: %v. Utilisation de la bannière de secours.", err)
 		// Bannière de secours si le fichier n'est pas trouvé
 		fmt.Print(colorBold)
 		fmt.Println("  ___ _ _  _               __  __  ___ ")
 		fmt.Println(" / __| | \\| |  ___  /\\ /\\ /__\\/__\\|_  )")
 		fmt.Println(" \\__ \\ | .` | / -_)/ _  //_\\ / \\/ / / / ")
-		fmt.Println(" |___/_|_|\\_| \\___|\\__,_/\\__/\\__//___| ")
+		fmt.Println(" |___/_|_|\\|_| \\___|\\__,_/\\__/\\__//___| ")
 		fmt.Print(colorReset)
 	}
 
@@ -811,6 +926,7 @@ func formatSize(size int64) string {
 
 // showMainMenu affiche le menu principal
 func ShowMainMenu() {
+	common.LogInfo("Affichage du menu principal.")
 	for {
 		clearScreen()
 		displayHeader()
@@ -822,6 +938,7 @@ func ShowMainMenu() {
 		fmt.Println("4. Surveiller un répertoire")
 		fmt.Println("5. Gérer les sauvegardes")
 		fmt.Println("6. Chercher des serveurs rsync sur le réseau")
+		fmt.Println("7. Gérer la configuration") // Ajout de l'option manquante
 		fmt.Println("0. Quitter")
 		
 		fmt.Print("\nVotre choix: ")
@@ -832,6 +949,7 @@ func ShowMainMenu() {
 			configureBackup()
 		case "2":
 			// manualBackup - à implémenter plus tard
+			common.LogInfo("Fonctionnalité de sauvegarde manuelle non implémentée.")
 			fmt.Println("Fonction non implémentée")
 		case "3":
 			restoreBackupInteractive()
@@ -841,10 +959,14 @@ func ShowMainMenu() {
 			manageBackupsInteractive()
 		case "6":
 			discoverRsyncServers()
+		case "7": // Ajout du case pour l'option manquante
+			manageConfiguration()
 		case "0":
-			fmt.Println("Au revoir!")
-			return
+			common.LogInfo("Quitter l'application depuis le menu principal.")
+			fmt.Println("Au revoir !")
+			return // Suppression de readInput ici
 		default:
+			common.LogWarning("Option de menu principal non valide: %s", choice)
 			fmt.Printf("\n%sOption invalide. Appuyez sur Entrée pour continuer...%s", colorRed, colorReset)
 			readInput("")
 		}
@@ -853,6 +975,7 @@ func ShowMainMenu() {
 
 // discoverRsyncServers recherche et configure les serveurs rsync sur le réseau
 func discoverRsyncServers() {
+	common.LogInfo("Début de la découverte des serveurs rsync.")
 	clearScreen()
 	fmt.Printf("%sRecherche de serveurs rsync sur le réseau%s\n\n", colorBold, colorReset)
 	
@@ -860,9 +983,10 @@ func discoverRsyncServers() {
 	fmt.Println("Entrez le sous-réseau à scanner (format CIDR, par exemple 192.168.0.0/24)")
 	fmt.Println("ou laissez vide pour utiliser 192.168.0.0/24:")
 	
-	subnetCIDR := readInput("Sous-réseau: ")
+	subnetCIDR := readAndValidateInput("Sous-réseau: ", common.IsValidSubnet, "Format CIDR invalide (ex: 192.168.0.0/24).") // Utilisation de common.IsValidSubnet
 	if subnetCIDR == "" {
 		subnetCIDR = "192.168.0.0/24"
+		common.LogInfo("Sous-réseau par défaut utilisé pour la découverte: %s", subnetCIDR)
 	}
 	
 	// Afficher un message d'attente
@@ -876,6 +1000,7 @@ func discoverRsyncServers() {
 	servers := discovery.ScanNetwork(subnetCIDR, 30)
 	
 	if len(servers) == 0 {
+		common.LogInfo("Aucun serveur rsync trouvé sur le réseau %s.", subnetCIDR)
 		fmt.Printf("\n%sAucun serveur rsync trouvé sur le réseau.%s\n", colorYellow, colorReset)
 		fmt.Println("Vérifiez que:")
 		fmt.Println("1. Le service rsync est activé sur votre NAS ou serveur")
@@ -884,6 +1009,7 @@ func discoverRsyncServers() {
 		return
 	}
 	
+	common.LogInfo("%d serveurs rsync trouvés sur le réseau %s.", len(servers), subnetCIDR)
 	// Afficher les serveurs trouvés
 	fmt.Printf("\n%s%d serveurs rsync trouvés:%s\n\n", colorGreen, len(servers), colorReset)
 	
@@ -915,6 +1041,7 @@ func discoverRsyncServers() {
 	
 	if err != nil || choice < 1 || choice > len(servers) {
 		if choiceStr != "0" {
+			common.LogWarning("Choix de serveur invalide pour la configuration: %s", choiceStr)
 			fmt.Printf("\n%sChoix invalide.%s\n", colorRed, colorReset)
 		}
 		return
@@ -922,11 +1049,13 @@ func discoverRsyncServers() {
 	
 	// Configurer le serveur sélectionné
 	selectedServer := servers[choice-1]
+	common.LogInfo("Serveur %s sélectionné pour la configuration.", selectedServer.IP)
 	configureRsyncServer(selectedServer)
 }
 
 // configureRsyncServer configure un serveur rsync sélectionné
 func configureRsyncServer(server wrappers.RsyncServer) {
+	common.LogInfo("Début de la configuration du serveur rsync: %s.", server.IP)
 	clearScreen()
 	serverName := server.IP
 	if server.Hostname != "" {
@@ -944,17 +1073,18 @@ func configureRsyncServer(server wrappers.RsyncServer) {
 		defaultName = parts[0]
 	}
 	
-	name := readInput(fmt.Sprintf("Nom du serveur (défaut: %s): ", defaultName))
+	name := readAndValidateInput(fmt.Sprintf("Nom du serveur (défaut: %s): ", defaultName), common.IsValidName, "Nom invalide.") // Utilisation de common.IsValidName
 	if name == "" {
 		name = defaultName
 	}
 	
 	// Demander le nom d'utilisateur
-	username := readInput("Nom d'utilisateur pour la connexion: ")
+	username := readAndValidateInput("Nom d'utilisateur pour la connexion: ", common.IsValidName, "Nom d'utilisateur invalide.") // Utilisation de common.IsValidName
 	
 	// Si des modules sont disponibles, demander lequel utiliser
 	defaultModule := ""
 	if len(server.Modules) > 0 {
+		common.LogInfo("Modules disponibles pour %s: %v", server.IP, server.Modules)
 		fmt.Println("\nModules disponibles:")
 		for i, module := range server.Modules {
 			fmt.Printf("%d. %s: %s\n", i+1, module.Name, module.Description)
@@ -964,6 +1094,9 @@ func configureRsyncServer(server wrappers.RsyncServer) {
 		
 		if moduleIdx, err := strconv.Atoi(moduleChoice); err == nil && moduleIdx > 0 && moduleIdx <= len(server.Modules) {
 			defaultModule = server.Modules[moduleIdx-1].Name
+			common.LogInfo("Module par défaut sélectionné: %s", defaultModule)
+		} else {
+			common.LogWarning("Choix de module invalide ou aucun module sélectionné: %s", moduleChoice)
 		}
 	}
 	
@@ -985,8 +1118,10 @@ func configureRsyncServer(server wrappers.RsyncServer) {
 	
 	// Enregistrer le serveur dans la configuration
 	if err := common.AddRsyncServer(serverConfig); err != nil {
+		common.LogError("Erreur lors de la sauvegarde de la configuration du serveur rsync %s: %v", serverConfig.Name, err)
 		fmt.Printf("\n%sErreur lors de la sauvegarde de la configuration: %v%s\n", colorRed, err, colorReset)
 	} else {
+		common.LogInfo("Serveur rsync %s configuré avec succès.", serverConfig.Name)
 		fmt.Printf("\n%sServeur rsync %s configuré avec succès!%s\n", colorGreen, name, colorReset)
 	}
 	
@@ -994,29 +1129,36 @@ func configureRsyncServer(server wrappers.RsyncServer) {
 	configBackup := readInput("\nVoulez-vous configurer une sauvegarde vers ce serveur maintenant? (o/n): ")
 	
 	if strings.ToLower(configBackup) == "o" {
+		common.LogInfo("Configuration d'une sauvegarde distante vers %s demandée.", serverConfig.Name)
 		configureRemoteBackup(serverConfig)
+	} else {
+		common.LogInfo("Configuration d'une sauvegarde distante vers %s annulée.", serverConfig.Name)
 	}
 }
 
 // configureRemoteBackup configure une sauvegarde vers un serveur rsync distant
 func configureRemoteBackup(serverConfig common.RsyncServerConfig) {
+	common.LogInfo("Début de la configuration d'une sauvegarde distante vers %s.", serverConfig.Name)
 	clearScreen()
 	fmt.Printf("%sConfiguration d'une sauvegarde vers %s%s\n\n", colorBold, serverConfig.Name, colorReset)
 	
-	name := readInput("Nom de la sauvegarde: ")
-	sourcePath := readInput("Chemin du répertoire à surveiller: ")
+	name := readAndValidateInput("Nom de la sauvegarde: ", common.IsValidName, "Nom invalide.") // Utilisation de common.IsValidName
+	sourcePath := readAndValidateInput("Chemin du répertoire à surveiller: ", common.IsValidPath, "Chemin invalide ou non sécurisé.") // Utilisation de common.IsValidPath
 	
 	// Expandir les chemins relatifs, y compris ~/
 	if strings.HasPrefix(sourcePath, "~/") {
 		homeDir, err := os.UserHomeDir()
 		if err == nil {
 			sourcePath = filepath.Join(homeDir, sourcePath[2:])
+		} else {
+			common.LogError("Impossible d'obtenir le répertoire personnel de l'utilisateur pour la source distante: %v", err)
 		}
 	}
 	
 	// Normaliser et vérifier le chemin
 	sourcePath = filepath.Clean(sourcePath)
 	if !common.DirExists(sourcePath) {
+		common.LogError("Répertoire source '%s' n'existe pas pour la sauvegarde distante.", sourcePath)
 		fmt.Printf("%sErreur: Le répertoire '%s' n'existe pas.%s\n", colorRed, sourcePath, colorReset)
 		return
 	}
@@ -1024,15 +1166,19 @@ func configureRemoteBackup(serverConfig common.RsyncServerConfig) {
 	// Sélectionner le module à utiliser
 	module := serverConfig.DefaultModule
 	if len(serverConfig.Modules) > 0 {
+		common.LogInfo("Modules disponibles pour la sauvegarde distante: %v", serverConfig.Modules)
 		fmt.Println("\nModules disponibles:")
 		for i, mod := range serverConfig.Modules {
 			fmt.Printf("%d. %s\n", i+1, mod)
 		}
 		
-		moduleChoice := readInput("\nChoisissez un module (0 pour utiliser le paramètre par défaut): ")
+		moduleChoice := readInput("\nChoisissez un module par défaut (0 pour aucun): ")
 		
 		if moduleIdx, err := strconv.Atoi(moduleChoice); err == nil && moduleIdx > 0 && moduleIdx <= len(serverConfig.Modules) {
 			module = serverConfig.Modules[moduleIdx-1]
+			common.LogInfo("Module sélectionné pour la sauvegarde distante: %s.", module)
+		} else {
+			common.LogWarning("Choix de module invalide ou aucun module sélectionné pour la sauvegarde distante: %s", moduleChoice)
 		}
 	}
 	
@@ -1063,8 +1209,13 @@ func configureRemoteBackup(serverConfig common.RsyncServerConfig) {
 	var excludeDirs []string
 	if excludeDirsStr != "" {
 		excludeDirs = strings.Split(excludeDirsStr, ",")
-		for i := range excludeDirs {
-			excludeDirs[i] = strings.TrimSpace(excludeDirs[i])
+		for i, dir := range excludeDirs {
+			excludeDirs[i] = strings.TrimSpace(dir)
+			if !common.IsValidExcludePattern(excludeDirs[i]) { // Utilisation de common.IsValidExcludePattern
+				common.LogError("Modèle d'exclusion de répertoire invalide pour la sauvegarde distante: %s", excludeDirs[i])
+				fmt.Printf("%sModèle d'exclusion de répertoire invalide: %s%s\n", colorRed, excludeDirs[i], colorReset)
+				return
+			}
 		}
 	} else {
 		excludeDirs = commonExcludeDirs
@@ -1074,8 +1225,13 @@ func configureRemoteBackup(serverConfig common.RsyncServerConfig) {
 	var excludeFiles []string
 	if excludeFilesStr != "" {
 		excludeFiles = strings.Split(excludeFilesStr, ",")
-		for i := range excludeFiles {
-			excludeFiles[i] = strings.TrimSpace(excludeFiles[i])
+		for i, file := range excludeFiles {
+			excludeFiles[i] = strings.TrimSpace(file)
+			if !common.IsValidExcludePattern(excludeFiles[i]) { // Utilisation de common.IsValidExcludePattern
+				common.LogError("Modèle d'exclusion de fichier invalide pour la sauvegarde distante: %s", excludeFiles[i])
+				fmt.Printf("%sModèle d'exclusion de fichier invalide: %s%s\n", colorRed, excludeFiles[i], colorReset)
+				return
+			}
 		}
 	} else {
 		excludeFiles = commonExcludeFiles
@@ -1086,6 +1242,8 @@ func configureRemoteBackup(serverConfig common.RsyncServerConfig) {
 	interval := 0
 	if intervalVal, err := strconv.Atoi(intervalStr); err == nil && intervalVal > 0 {
 		interval = intervalVal
+	} else {
+		common.LogWarning("Intervalle de sauvegarde distante invalide: %s. Utilisation de 0.", intervalStr)
 	}
 	
 	// Créer la configuration de sauvegarde
@@ -1107,18 +1265,23 @@ func configureRemoteBackup(serverConfig common.RsyncServerConfig) {
 	
 	// Enregistrer la configuration
 	if err := common.AddBackupDirectory(backupConfig); err != nil {
+		common.LogError("Erreur lors de l'enregistrement de la configuration de sauvegarde distante %s: %v", backupConfig.Name, err)
 		fmt.Printf("%sErreur lors de l'enregistrement de la configuration: %v%s\n", colorRed, err, colorReset)
 		common.AppConfig.BackupDestination = prevDestination // Restaurer l'ancienne destination
 	} else {
+		common.LogInfo("Configuration de sauvegarde distante %s enregistrée avec succès.", backupConfig.Name)
 		if err := common.SaveConfig(common.AppConfig); err != nil {
+			common.LogError("Erreur lors de la mise à jour de la destination de sauvegarde distante: %v", err)
 			fmt.Printf("%sErreur lors de la mise à jour de la destination: %v%s\n", colorRed, err, colorReset)
 		} else {
+			common.LogInfo("Destination de sauvegarde distante mise à jour avec succès.")
 			fmt.Printf("\n%sConfiguration de sauvegarde vers %s enregistrée avec succès!%s\n", 
 				colorGreen, serverConfig.Name, colorReset)
-				
+			
 			// Proposer de faire une sauvegarde immédiate
 			doBackupNow := readInput("\nVoulez-vous effectuer une sauvegarde immédiate? (o/n): ")
 			if strings.ToLower(doBackupNow) == "o" {
+				common.LogInfo("Sauvegarde immédiate vers %s demandée.", serverConfig.Name)
 				fmt.Printf("\nDémarrage de la sauvegarde vers %s...\n", serverConfig.Name)
 				
 				// Générer un ID unique pour la sauvegarde
@@ -1126,6 +1289,7 @@ func configureRemoteBackup(serverConfig common.RsyncServerConfig) {
 				
 				// Utiliser la fonction RsyncBackup pour effectuer la sauvegarde
 				if err := wrappers.RsyncBackup(sourcePath, destination, excludeDirs, excludeFiles, compression, &serverConfig); err != nil {
+					common.LogError("Erreur lors de la sauvegarde immédiate vers %s: %v", serverConfig.Name, err)
 					fmt.Printf("%sErreur lors de la sauvegarde: %v%s\n", colorRed, err, colorReset)
 					return
 				}
@@ -1133,6 +1297,7 @@ func configureRemoteBackup(serverConfig common.RsyncServerConfig) {
 				// Obtenir la taille du répertoire source comme approximation
 				size, err := getDirSize(sourcePath)
 				if err != nil {
+					common.LogError("Impossible de calculer la taille de la sauvegarde: %v", err)
 					fmt.Printf("Impossible de calculer la taille de la sauvegarde: %v\n", err)
 					size = 0
 				}
@@ -1152,11 +1317,15 @@ func configureRemoteBackup(serverConfig common.RsyncServerConfig) {
 				
 				// Sauvegarder les métadonnées
 				if err := common.SaveBackupInfo(backupInfo); err != nil {
+					common.LogError("Erreur lors de l'enregistrement des métadonnées pour %s: %v", backupInfo.ID, err)
 					fmt.Printf("%sErreur lors de l'enregistrement des métadonnées: %v%s\n", colorRed, err, colorReset)
 					return
 				}
 				
+				common.LogInfo("Sauvegarde immédiate vers %s terminée avec succès.", serverConfig.Name)
 				fmt.Printf("%sSauvegarde vers %s terminée avec succès!%s\n", colorGreen, serverConfig.Name, colorReset)
+			} else {
+				common.LogInfo("Sauvegarde immédiate annulée par l'utilisateur.")
 			}
 		}
 	}
@@ -1173,6 +1342,7 @@ func getDirSize(path string) (int64, error) {
 	var size int64
 	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
 		if err != nil {
+			common.LogError("Erreur lors du calcul de la taille du répertoire %s: %v", path, err)
 			return err
 		}
 		if !info.IsDir() {
@@ -1185,6 +1355,7 @@ func getDirSize(path string) (int64, error) {
 
 // manageConfiguration permet de gérer la configuration de l'application
 func manageConfiguration() {
+	common.LogInfo("Début de la gestion de la configuration.")
 	for {
 		clearScreen()
 		fmt.Printf("%sGestion de la Configuration%s\n\n", colorBold, colorReset)
@@ -1213,8 +1384,10 @@ func manageConfiguration() {
 		case "6":
 			changeBackupDestination()
 		case "0":
-			return
+			common.LogInfo("Retour au menu principal depuis la gestion de la configuration.")
+			return // Suppression de readInput ici
 		default:
+			common.LogWarning("Option de gestion de configuration non valide: %s", choice)
 			fmt.Println("Option non valide. Veuillez réessayer.")
 		}
 		
@@ -1224,6 +1397,7 @@ func manageConfiguration() {
 
 // displayFullConfig affiche la configuration complète de l'application
 func displayFullConfig() {
+	common.LogInfo("Affichage de la configuration complète.")
 	clearScreen()
 	fmt.Printf("%sConfiguration Complète de l'Application%s\n\n", colorBold, colorReset)
 	
@@ -1241,12 +1415,22 @@ func displayFullConfig() {
 	// Afficher les répertoires sauvegardés
 	fmt.Printf("%sRépertoires sauvegardés:%s\n", colorBold, colorReset)
 	if len(common.AppConfig.BackupDirs) == 0 {
+		common.LogInfo("Aucun répertoire de sauvegarde configuré à afficher.")
 		fmt.Printf("%sAucun répertoire configuré.%s\n\n", colorYellow, colorReset)
 	} else {
+		common.LogInfo("Affichage des %d répertoires de sauvegarde configurés.", len(common.AppConfig.BackupDirs))
 		for i, dir := range common.AppConfig.BackupDirs {
 			fmt.Printf("%d. %s (%s)\n", i+1, dir.Name, dir.SourcePath)
-			fmt.Printf("   Compression: %v, Incrémental: %v, Intervalle: %d minutes\n", 
-				dir.Compression, dir.IsIncremental, dir.Interval)
+			incr := "Non"
+			if dir.IsIncremental {
+				incr = "Oui"
+			}
+			comp := "Non"
+			if dir.Compression {
+				comp = "Oui"
+			}
+			fmt.Printf("   Compression: %s, Incrémental: %s, Intervalle: %d min\n", 
+				comp, incr, dir.Interval)
 			
 			// Afficher les exclusions si présentes
 			if len(dir.ExcludeDirs) > 0 || len(dir.ExcludeFiles) > 0 {
@@ -1277,8 +1461,10 @@ func displayFullConfig() {
 	// Afficher les serveurs rsync
 	fmt.Printf("%sServeurs rsync configurés:%s\n", colorBold, colorReset)
 	if len(common.AppConfig.RsyncServers) == 0 {
+		common.LogInfo("Aucun serveur rsync configuré à afficher.")
 		fmt.Printf("%sAucun serveur rsync configuré.%s\n", colorYellow, colorReset)
 	} else {
+		common.LogInfo("Affichage des %d serveurs rsync configurés.", len(common.AppConfig.RsyncServers))
 		for i, server := range common.AppConfig.RsyncServers {
 			fmt.Printf("%d. %s (%s)\n", i+1, server.Name, server.IP)
 			fmt.Printf("   Port: %d, Port SSH: %d, Utilisateur: %s\n", 
@@ -1294,18 +1480,22 @@ func displayFullConfig() {
 			fmt.Println()
 		}
 	}
+	common.LogInfo("Configuration complète affichée.")
 }
 
 // manageBackupDirectories permet de gérer les répertoires à sauvegarder
 func manageBackupDirectories() {
+	common.LogInfo("Début de la gestion des répertoires de sauvegarde.")
 	for {
 		clearScreen()
 		fmt.Printf("%sGestion des répertoires sauvegardés%s\n\n", colorBold, colorReset)
 		
 		// Afficher les répertoires sauvegardés
 		if len(common.AppConfig.BackupDirs) == 0 {
+			common.LogInfo("Aucun répertoire de sauvegarde configuré à gérer.")
 			fmt.Printf("%sAucun répertoire configuré.%s\n\n", colorYellow, colorReset)
 		} else {
+			common.LogInfo("Affichage des %d répertoires de sauvegarde configurés pour gestion.", len(common.AppConfig.BackupDirs))
 			fmt.Printf("%sRépertoires configurés:%s\n", colorBold, colorReset)
 			for i, dir := range common.AppConfig.BackupDirs {
 				fmt.Printf("%d. %s (%s)\n", i+1, dir.Name, dir.SourcePath)
@@ -1333,14 +1523,17 @@ func manageBackupDirectories() {
 		switch choice {
 		case "1":
 			configureBackup() // Utiliser la fonction existante
+			common.LogInfo("Ajout d'un répertoire de sauvegarde demandé.")
 			return
 		case "2":
 			editBackupDirectory()
 		case "3":
 			deleteBackupDirectory()
 		case "0":
-			return
+			common.LogInfo("Retour au menu de gestion de la configuration.")
+			return // Suppression de readInput ici
 		default:
+			common.LogWarning("Option de gestion des répertoires de sauvegarde non valide: %s", choice)
 			fmt.Println("Option non valide.")
 		}
 		
@@ -1350,7 +1543,9 @@ func manageBackupDirectories() {
 
 // editBackupDirectory permet de modifier un répertoire de sauvegarde existant
 func editBackupDirectory() {
+	common.LogInfo("Début de la modification d'un répertoire de sauvegarde.")
 	if len(common.AppConfig.BackupDirs) == 0 {
+		common.LogWarning("Aucun répertoire de sauvegarde à modifier.")
 		fmt.Printf("%sAucun répertoire à modifier.%s\n", colorYellow, colorReset)
 		return
 	}
@@ -1359,24 +1554,25 @@ func editBackupDirectory() {
 	idx, err := strconv.Atoi(idxStr)
 	
 	if err != nil || idx < 1 || idx > len(common.AppConfig.BackupDirs) {
+		common.LogError("Numéro de répertoire invalide pour modification: %s", idxStr)
 		fmt.Printf("%sNuméro invalide.%s\n", colorRed, colorReset)
 		return
 	}
 	
 	// Récupérer la configuration à modifier
 	dir := common.AppConfig.BackupDirs[idx-1]
-	
+	common.LogInfo("Modification du répertoire de sauvegarde: %s.", dir.Name)
 	fmt.Printf("%sModification de la configuration '%s'%s\n\n", colorBold, dir.Name, colorReset)
 	
 	// Permettre de modifier chaque propriété
 	fmt.Printf("Nom actuel: %s\n", dir.Name)
-	name := readInput("Nouveau nom (vide pour garder l'actuel): ")
+	name := readAndValidateInput("Nouveau nom (vide pour garder l'actuel): ", common.IsValidName, "Nom invalide.") // Utilisation de common.IsValidName
 	if name == "" {
 		name = dir.Name
 	}
 	
 	fmt.Printf("Chemin actuel: %s\n", dir.SourcePath)
-	sourcePath := readInput("Nouveau chemin (vide pour garder l'actuel): ")
+	sourcePath := readAndValidateInput("Nouveau chemin (vide pour garder l'actuel): ", common.IsValidPath, "Chemin invalide.") // Utilisation de common.IsValidPath
 	if sourcePath == "" {
 		sourcePath = dir.SourcePath
 	} else {
@@ -1385,15 +1581,19 @@ func editBackupDirectory() {
 			homeDir, err := os.UserHomeDir()
 			if err == nil {
 				sourcePath = filepath.Join(homeDir, sourcePath[2:])
+			} else {
+				common.LogError("Impossible d'obtenir le répertoire personnel de l'utilisateur pour la source: %v", err)
 			}
 		}
 		
 		// Normaliser et vérifier le chemin
 		sourcePath = filepath.Clean(sourcePath)
 		if !common.DirExists(sourcePath) {
+			common.LogWarning("Répertoire source '%s' n'existe pas lors de la modification.", sourcePath)
 			fmt.Printf("%sAttention: Le répertoire '%s' n'existe pas.%s\n", colorYellow, sourcePath, colorReset)
 			confirm := readInput("Continuer quand même? (o/n): ")
 			if strings.ToLower(confirm) != "o" {
+				common.LogInfo("Modification du répertoire annulée par l'utilisateur.")
 				return
 			}
 		}
@@ -1429,8 +1629,13 @@ func editBackupDirectory() {
 	excludeDirs := dir.ExcludeDirs
 	if excludeDirsStr != "" {
 		excludeDirs = strings.Split(excludeDirsStr, ",")
-		for i := range excludeDirs {
-			excludeDirs[i] = strings.TrimSpace(excludeDirs[i])
+		for i, dir := range excludeDirs {
+			excludeDirs[i] = strings.TrimSpace(dir)
+			if !common.IsValidExcludePattern(excludeDirs[i]) { // Utilisation de common.IsValidExcludePattern
+				common.LogError("Modèle d'exclusion de répertoire invalide lors de la modification: %s", excludeDirs[i])
+				fmt.Printf("%sModèle d'exclusion de répertoire invalide: %s%s\n", colorRed, excludeDirs[i], colorReset)
+				return
+			}
 		}
 	}
 	
@@ -1440,8 +1645,13 @@ func editBackupDirectory() {
 	excludeFiles := dir.ExcludeFiles
 	if excludeFilesStr != "" {
 		excludeFiles = strings.Split(excludeFilesStr, ",")
-		for i := range excludeFiles {
-			excludeFiles[i] = strings.TrimSpace(excludeFiles[i])
+		for i, file := range excludeFiles {
+			excludeFiles[i] = strings.TrimSpace(file)
+			if !common.IsValidExcludePattern(excludeFiles[i]) { // Utilisation de common.IsValidExcludePattern
+				common.LogError("Modèle d'exclusion de fichier invalide lors de la modification: %s", excludeFiles[i])
+				fmt.Printf("%sModèle d'exclusion de fichier invalide: %s%s\n", colorRed, excludeFiles[i], colorReset)
+				return
+			}
 		}
 	}
 	
@@ -1452,6 +1662,8 @@ func editBackupDirectory() {
 	if intervalStr != "" {
 		if i, err := strconv.Atoi(intervalStr); err == nil && i >= 0 {
 			interval = i
+		} else {
+			common.LogWarning("Intervalle invalide lors de la modification: %s. Garde l'actuel.", intervalStr)
 		}
 	}
 	
@@ -1471,16 +1683,20 @@ func editBackupDirectory() {
 	common.AppConfig.BackupDirs[idx-1] = updatedConfig
 	
 	if err := common.SaveConfig(common.AppConfig); err != nil {
+		common.LogError("Erreur lors de la mise à jour de la configuration du répertoire %s: %v", name, err)
 		fmt.Printf("%sErreur lors de la mise à jour de la configuration: %v%s\n", colorRed, err, colorReset)
 		return
 	}
 	
+	common.LogInfo("Configuration du répertoire %s modifiée avec succès.", name)
 	fmt.Printf("%sConfiguration '%s' modifiée avec succès.%s\n", colorGreen, name, colorReset)
 }
 
 // deleteBackupDirectory permet de supprimer un répertoire de sauvegarde
 func deleteBackupDirectory() {
+	common.LogInfo("Début de la suppression d'un répertoire de sauvegarde.")
 	if len(common.AppConfig.BackupDirs) == 0 {
+		common.LogWarning("Aucun répertoire de sauvegarde à supprimer.")
 		fmt.Printf("%sAucun répertoire à supprimer.%s\n", colorYellow, colorReset)
 		return
 	}
@@ -1489,6 +1705,7 @@ func deleteBackupDirectory() {
 	idx, err := strconv.Atoi(idxStr)
 	
 	if err != nil || idx < 1 || idx > len(common.AppConfig.BackupDirs) {
+		common.LogError("Numéro de répertoire invalide pour suppression: %s", idxStr)
 		fmt.Printf("%sNuméro invalide.%s\n", colorRed, colorReset)
 		return
 	}
@@ -1498,6 +1715,7 @@ func deleteBackupDirectory() {
 	
 	confirm := readInput(fmt.Sprintf("Êtes-vous sûr de vouloir supprimer la configuration '%s'? (o/n): ", name))
 	if strings.ToLower(confirm) != "o" {
+		common.LogInfo("Suppression du répertoire annulée par l'utilisateur pour %s.", name)
 		fmt.Println("Suppression annulée.")
 		return
 	}
@@ -1505,36 +1723,43 @@ func deleteBackupDirectory() {
 	// Supprimer l'élément
 	common.AppConfig.BackupDirs = append(
 		common.AppConfig.BackupDirs[:idx-1], 
-		common.AppConfig.BackupDirs[idx:]...
+		common.AppConfig.BackupDirs[idx:]...,
 	)
 	
 	if err := common.SaveConfig(common.AppConfig); err != nil {
+		common.LogError("Erreur lors de la suppression de la configuration du répertoire %s: %v", name, err)
 		fmt.Printf("%sErreur lors de la mise à jour de la configuration: %v%s\n", colorRed, err, colorReset)
 		return
 	}
 	
+	common.LogInfo("Configuration du répertoire %s supprimée avec succès.", name)
 	fmt.Printf("%sConfiguration '%s' supprimée avec succès.%s\n", colorGreen, name, colorReset)
 }
 
 // manageRsyncServers permet de gérer les serveurs rsync configurés
 func manageRsyncServers() {
+	common.LogInfo("Début de la gestion des serveurs rsync.")
 	for {
 		clearScreen()
 		fmt.Printf("%sGestion des serveurs rsync%s\n\n", colorBold, colorReset)
 		
 		// Afficher les serveurs configurés
 		if len(common.AppConfig.RsyncServers) == 0 {
+			common.LogWarning("Aucun serveur rsync configuré à gérer.")
 			fmt.Printf("%sAucun serveur rsync configuré.%s\n\n", colorYellow, colorReset)
 		} else {
+			common.LogInfo("Affichage des %d serveurs rsync configurés pour gestion.", len(common.AppConfig.RsyncServers))
 			fmt.Printf("%sServeurs configurés:%s\n", colorBold, colorReset)
 			for i, server := range common.AppConfig.RsyncServers {
 				fmt.Printf("%d. %s (%s)\n", i+1, server.Name, server.IP)
-				fmt.Printf("   Utilisateur: %s, Port SSH: %d\n", server.Username, server.SSHPort)
+				fmt.Printf("   Port: %d, Port SSH: %d, Utilisateur: %s\n", 
+					server.Port, server.SSHPort, server.Username)
+				
 				if len(server.Modules) > 0 {
 					fmt.Printf("   Modules: %s\n", strings.Join(server.Modules, ", "))
 				}
+				fmt.Println()
 			}
-			fmt.Println()
 		}
 		
 		fmt.Printf("  %s1.%s Rechercher et ajouter un serveur\n", colorGreen, colorReset)
@@ -1546,16 +1771,19 @@ func manageRsyncServers() {
 		
 		switch choice {
 		case "1":
-			discoverRsyncServers() // Utiliser la fonction existante
+			discoverRsyncServers()
+			common.LogInfo("Recherche et ajout de serveur rsync demandé.")
 			return
 		case "2":
 			editRsyncServer()
 		case "3":
 			deleteRsyncServer()
 		case "0":
-			return
+			common.LogInfo("Retour au menu de gestion de la configuration.")
+			return // Suppression de readInput ici
 		default:
-			fmt.Println("Option non valide.")
+			common.LogWarning("Option de gestion des serveurs rsync non valide: %s", choice)
+			fmt.Println("Option non valide. Veuillez réessayer.")
 		}
 		
 		readInput("Appuyez sur Entrée pour continuer...")
@@ -1564,7 +1792,9 @@ func manageRsyncServers() {
 
 // editRsyncServer permet de modifier un serveur rsync existant
 func editRsyncServer() {
+	common.LogInfo("Début de la modification d'un serveur rsync.")
 	if len(common.AppConfig.RsyncServers) == 0 {
+		common.LogWarning("Aucun serveur rsync à modifier.")
 		fmt.Printf("%sAucun serveur à modifier.%s\n", colorYellow, colorReset)
 		return
 	}
@@ -1573,18 +1803,19 @@ func editRsyncServer() {
 	idx, err := strconv.Atoi(idxStr)
 	
 	if err != nil || idx < 1 || idx > len(common.AppConfig.RsyncServers) {
+		common.LogError("Numéro de serveur rsync invalide pour modification: %s", idxStr)
 		fmt.Printf("%sNuméro invalide.%s\n", colorRed, colorReset)
 		return
 	}
 	
 	// Récupérer la configuration à modifier
 	server := common.AppConfig.RsyncServers[idx-1]
-	
+	common.LogInfo("Modification du serveur rsync: %s.", server.Name)
 	fmt.Printf("%sModification du serveur '%s'%s\n\n", colorBold, server.Name, colorReset)
 	
 	// Permettre de modifier chaque propriété
 	fmt.Printf("Nom actuel: %s\n", server.Name)
-	name := readInput("Nouveau nom (vide pour garder l'actuel): ")
+	name := readAndValidateInput("Nouveau nom (vide pour garder l'actuel): ", common.IsValidName, "Nom invalide.") // Utilisation de common.IsValidName
 	if name == "" {
 		name = server.Name
 	}
@@ -1596,7 +1827,7 @@ func editRsyncServer() {
 	}
 	
 	fmt.Printf("Nom d'utilisateur actuel: %s\n", server.Username)
-	username := readInput("Nouveau nom d'utilisateur (vide pour garder l'actuel): ")
+	username := readAndValidateInput("Nouveau nom d'utilisateur (vide pour garder l'actuel): ", common.IsValidName, "Nom d'utilisateur invalide.") // Utilisation de common.IsValidName
 	if username == "" {
 		username = server.Username
 	}
@@ -1607,6 +1838,8 @@ func editRsyncServer() {
 	if sshPortStr != "" {
 		if port, err := strconv.Atoi(sshPortStr); err == nil && port > 0 {
 			sshPort = port
+		} else {
+			common.LogWarning("Port SSH invalide: %s. Garde l'actuel.", sshPortStr)
 		}
 	}
 	
@@ -1617,20 +1850,21 @@ func editRsyncServer() {
 		fmt.Printf("Module par défaut actuel: %s\n", defaultModule)
 		
 		fmt.Println("\nVoulez-vous changer le module par défaut?")
-		for i, module := range server.Modules {
-			fmt.Printf("%d. %s\n", i+1, module)
-		}
-		fmt.Printf("0. Aucun module par défaut\n")
-		
 		moduleChoice := readInput("\nChoisissez un module (vide pour garder l'actuel): ")
 		
 		if moduleChoice != "" {
 			if moduleIdx, err := strconv.Atoi(moduleChoice); err == nil {
 				if moduleIdx == 0 {
 					defaultModule = ""
+					common.LogInfo("Module par défaut supprimé pour %s.", name)
 				} else if moduleIdx > 0 && moduleIdx <= len(server.Modules) {
 					defaultModule = server.Modules[moduleIdx-1]
+					common.LogInfo("Module par défaut mis à jour pour %s: %s.", name, defaultModule)
+				} else {
+					common.LogWarning("Choix de module invalide: %s. Garde l'actuel.", moduleChoice)
 				}
+			} else {
+				common.LogWarning("Choix de module invalide: %s. Garde l'actuel.", moduleChoice)
 			}
 		}
 	}
@@ -1652,21 +1886,26 @@ func editRsyncServer() {
 	// Mettre à jour également les références dans les configurations de sauvegarde
 	for i, dir := range common.AppConfig.BackupDirs {
 		if dir.RemoteServer != nil && dir.RemoteServer.Name == server.Name {
+			common.LogInfo("Mise à jour de la référence du serveur distant dans la configuration de sauvegarde %s.", dir.Name)
 			common.AppConfig.BackupDirs[i].RemoteServer = &updatedServer
 		}
 	}
 	
 	if err := common.SaveConfig(common.AppConfig); err != nil {
+		common.LogError("Erreur lors de la mise à jour du serveur rsync %s: %v", name, err)
 		fmt.Printf("%sErreur lors de la mise à jour de la configuration: %v%s\n", colorRed, err, colorReset)
 		return
 	}
 	
+	common.LogInfo("Serveur rsync %s modifié avec succès.", name)
 	fmt.Printf("%sServeur '%s' modifié avec succès.%s\n", colorGreen, name, colorReset)
 }
 
 // deleteRsyncServer permet de supprimer un serveur rsync
 func deleteRsyncServer() {
+	common.LogInfo("Début de la suppression d'un serveur rsync.")
 	if len(common.AppConfig.RsyncServers) == 0 {
+		common.LogWarning("Aucun serveur rsync à supprimer.")
 		fmt.Printf("%sAucun serveur à supprimer.%s\n", colorYellow, colorReset)
 		return
 	}
@@ -1675,59 +1914,72 @@ func deleteRsyncServer() {
 	idx, err := strconv.Atoi(idxStr)
 	
 	if err != nil || idx < 1 || idx > len(common.AppConfig.RsyncServers) {
+		common.LogError("Numéro de serveur rsync invalide pour suppression: %s", idxStr)
 		fmt.Printf("%sNuméro invalide.%s\n", colorRed, colorReset)
 		return
 	}
 	
-	// Récupérer le serveur pour vérifier les dépendances
-	server := common.AppConfig.RsyncServers[idx-1]
+	// Récupérer le nom pour confirmation
+	name := common.AppConfig.RsyncServers[idx-1].Name
+	
+	confirm := readInput(fmt.Sprintf("Êtes-vous sûr de vouloir supprimer le serveur '%s'? (o/n): ", name))
+	if strings.ToLower(confirm) != "o" {
+		common.LogInfo("Suppression du serveur rsync annulée par l'utilisateur pour %s.", name)
+		fmt.Println("Suppression annulée.")
+		return
+	}
 	
 	// Vérifier si le serveur est utilisé par des configurations de sauvegarde
 	var usedBy []string
 	for _, dir := range common.AppConfig.BackupDirs {
-		if dir.RemoteServer != nil && dir.RemoteServer.Name == server.Name {
+		if dir.RemoteServer != nil && dir.RemoteServer.Name == name {
 			usedBy = append(usedBy, dir.Name)
 		}
 	}
 	
 	if len(usedBy) > 0 {
+		common.LogWarning("Tentative de suppression du serveur rsync %s utilisé par les configurations: %v", name, usedBy)
 		fmt.Printf("%sAttention: Ce serveur est utilisé par les configurations suivantes:%s\n", 
 			colorYellow, colorReset)
 		for _, name := range usedBy {
 			fmt.Printf("- %s\n", name)
 		}
 		fmt.Println("La suppression du serveur affectera ces configurations.")
+		confirm := readInput("Voulez-vous vraiment continuer? (o/n): ")
+		if strings.ToLower(confirm) != "o" {
+			common.LogInfo("Suppression du serveur rsync annulée par l'utilisateur (utilisé par d'autres configurations) pour %s.", name)
+			fmt.Println("Suppression annulée.")
+			return
+		}
 	}
-	
-	confirm := readInput(fmt.Sprintf("Êtes-vous sûr de vouloir supprimer le serveur '%s'? (o/n): ", server.Name))
-	if strings.ToLower(confirm) != "o" {
-		fmt.Println("Suppression annulée.")
-		return
-	}
-	
+
 	// Supprimer l'élément
 	common.AppConfig.RsyncServers = append(
 		common.AppConfig.RsyncServers[:idx-1], 
-		common.AppConfig.RsyncServers[idx:]...
+		common.AppConfig.RsyncServers[idx:]...,
 	)
 	
 	// Mettre à jour les références dans les configurations de sauvegarde
 	for i, dir := range common.AppConfig.BackupDirs {
-		if dir.RemoteServer != nil && dir.RemoteServer.Name == server.Name {
+		if dir.RemoteServer != nil && dir.RemoteServer.Name == name {
+			common.LogInfo("Mise à jour de la référence du serveur distant dans la configuration de sauvegarde %s.", dir.Name)
 			common.AppConfig.BackupDirs[i].RemoteServer = nil
 		}
 	}
 	
 	if err := common.SaveConfig(common.AppConfig); err != nil {
+		common.LogError("Erreur lors de la suppression du serveur rsync %s: %v", name, err)
 		fmt.Printf("%sErreur lors de la mise à jour de la configuration: %v%s\n", colorRed, err, colorReset)
 		return
 	}
 	
-	fmt.Printf("%sServeur '%s' supprimé avec succès.%s\n", colorGreen, server.Name, colorReset)
+	common.LogInfo("Serveur rsync %s supprimé avec succès.", name)
+	fmt.Printf("%sServeur '%s' supprimé avec succès.%s\n", colorGreen, name, colorReset)
 }
 
 // manageRetentionPolicy permet de modifier la politique de rétention
 func manageRetentionPolicy() {
+	common.LogInfo("Début de la modification de la politique de rétention.")
 	clearScreen()
 	fmt.Printf("%sConfiguration de la politique de rétention%s\n\n", colorBold, colorReset)
 	
@@ -1744,6 +1996,8 @@ func manageRetentionPolicy() {
 	if keepDailyStr != "" {
 		if days, err := strconv.Atoi(keepDailyStr); err == nil && days >= 0 {
 			keepDaily = days
+		} else {
+			common.LogWarning("Valeur invalide pour la conservation quotidienne: %s. Garde l'actuelle.", keepDailyStr)
 		}
 	}
 	
@@ -1752,6 +2006,8 @@ func manageRetentionPolicy() {
 	if keepWeeklyStr != "" {
 		if weeks, err := strconv.Atoi(keepWeeklyStr); err == nil && weeks >= 0 {
 			keepWeekly = weeks
+		} else {
+			common.LogWarning("Valeur invalide pour la conservation hebdomadaire: %s. Garde l'actuelle.", keepWeeklyStr)
 		}
 	}
 	
@@ -1760,6 +2016,8 @@ func manageRetentionPolicy() {
 	if keepMonthlyStr != "" {
 		if months, err := strconv.Atoi(keepMonthlyStr); err == nil && months >= 0 {
 			keepMonthly = months
+		} else {
+			common.LogWarning("Valeur invalide pour la conservation mensuelle: %s. Garde l'actuelle.", keepMonthlyStr)
 		}
 	}
 	
@@ -1771,23 +2029,27 @@ func manageRetentionPolicy() {
 	}
 	
 	if err := common.SaveConfig(common.AppConfig); err != nil {
+		common.LogError("Erreur lors de la mise à jour de la politique de rétention: %v", err)
 		fmt.Printf("%sErreur lors de la mise à jour de la configuration: %v%s\n", colorRed, err, colorReset)
 		return
 	}
 	
+	common.LogInfo("Politique de rétention mise à jour avec succès.")
 	fmt.Printf("%sPolitique de rétention mise à jour avec succès.%s\n", colorGreen, colorReset)
 }
 
 // changeBackupDestination permet de modifier la destination des sauvegardes
 func changeBackupDestination() {
+	common.LogInfo("Début de la modification de la destination principale des sauvegardes.")
 	clearScreen()
 	fmt.Printf("%sModification de la destination des sauvegardes%s\n\n", colorBold, colorReset)
 	
 	fmt.Printf("Destination actuelle: %s\n\n", common.AppConfig.BackupDestination)
 	
 	// Demander la nouvelle destination
-	newDest := readInput("Nouvelle destination (vide pour annuler): ")
+	newDest := readAndValidateInput("Nouvelle destination (vide pour annuler): ", common.IsValidPath, "Chemin invalide.") // Utilisation de common.IsValidPath
 	if newDest == "" {
+		common.LogInfo("Modification de la destination annulée: chemin vide.")
 		fmt.Println("Modification annulée.")
 		return
 	}
@@ -1797,23 +2059,36 @@ func changeBackupDestination() {
 		homeDir, err := os.UserHomeDir()
 		if err == nil {
 			newDest = filepath.Join(homeDir, newDest[2:])
+		} else {
+			common.LogError("Impossible d'obtenir le répertoire personnel de l'utilisateur pour la nouvelle destination: %v", err)
 		}
 	}
 	
 	// Normaliser le chemin
 	newDest = filepath.Clean(newDest)
 	
+	// SECURITY: Vérifier si le chemin de destination est autorisé
+	if !common.AppConfig.Security.IsPathAllowed(newDest) {
+		common.LogSecurity("Tentative de modification de la destination vers un chemin non autorisé: %s", newDest)
+		fmt.Printf("%sErreur: Le chemin de destination '%s' n'est pas autorisé dans la configuration de sécurité.%s\n", colorRed, newDest, colorReset)
+		return
+	}
+	
 	// Vérifier/créer le répertoire de destination
 	if !common.DirExists(newDest) {
-		createDest := readInput("Le répertoire n'existe pas. Voulez-vous le créer? (o/n): ")
+		fmt.Printf("Le répertoire n'existe pas. Voulez-vous le créer? (o/n): ")
+		createDest := readInput("")
 		if strings.ToLower(createDest) == "o" {
 			if err := os.MkdirAll(newDest, 0755); err != nil {
+				common.LogError("Erreur lors de la création du répertoire %s: %v", newDest, err)
 				fmt.Printf("%sErreur lors de la création du répertoire: %v%s\n", colorRed, err, colorReset)
 				return
 			}
+			common.LogInfo("Répertoire %s créé pour la nouvelle destination.", newDest)
 		} else {
+			common.LogInfo("Création de répertoire annulée par l'utilisateur pour la nouvelle destination.")
 			fmt.Println("Modification annulée.")
-			return
+			return	
 		}
 	}
 	
@@ -1821,15 +2096,18 @@ func changeBackupDestination() {
 	common.AppConfig.BackupDestination = newDest
 	
 	if err := common.SaveConfig(common.AppConfig); err != nil {
+		common.LogError("Erreur lors de la mise à jour de la destination principale: %v", err)
 		fmt.Printf("%sErreur lors de la mise à jour de la configuration: %v%s\n", colorRed, err, colorReset)
 		return
 	}
 	
+	common.LogInfo("Destination principale des sauvegardes mise à jour avec succès: %s.", newDest)
 	fmt.Printf("%sDestination des sauvegardes mise à jour avec succès.%s\n", colorGreen, colorReset)
 }
 
 // manageBackupDestinations permet de gérer les destinations de sauvegarde
 func manageBackupDestinations() {
+	common.LogInfo("Début de la gestion des destinations de sauvegarde.")
 	for {
 		clearScreen()
 		fmt.Printf("%sGestion des Destinations de Sauvegarde%s\n\n", colorBold, colorReset)
@@ -1838,8 +2116,10 @@ func manageBackupDestinations() {
 		fmt.Println("Destinations configurées:")
 		
 		if len(common.AppConfig.BackupDestinations) == 0 {
+			common.LogInfo("Aucune destination de sauvegarde configurée à gérer.")
 			fmt.Printf("%sAucune destination configurée%s\n\n", colorYellow, colorReset)
 		} else {
+			common.LogInfo("Affichage des %d destinations de sauvegarde configurées.", len(common.AppConfig.BackupDestinations))
 			for i, dest := range common.AppConfig.BackupDestinations {
 				defaultMark := ""
 				if dest.IsDefault {
@@ -1879,8 +2159,10 @@ func manageBackupDestinations() {
 		case "4":
 			setDefaultDestination()
 		case "0":
-			return
+			common.LogInfo("Retour au menu de gestion de la configuration depuis la gestion des destinations.")
+			return // Suppression de readInput ici
 		default:
+			common.LogWarning("Option de gestion des destinations non valide: %s", choice)
 			fmt.Println("Option non valide. Veuillez réessayer.")
 			readInput("Appuyez sur Entrée pour continuer...")
 		}
@@ -1889,12 +2171,14 @@ func manageBackupDestinations() {
 
 // addBackupDestination ajoute une nouvelle destination de sauvegarde
 func addBackupDestination() {
+	common.LogInfo("Début de l'ajout d'une nouvelle destination de sauvegarde.")
 	clearScreen()
 	fmt.Printf("%sAjout d'une Nouvelle Destination de Sauvegarde%s\n\n", colorBold, colorReset)
 	
 	// Demander les informations de base
-	name := readInput("Nom de la destination: ")
+	name := readAndValidateInput("Nom de la destination: ", common.IsValidName, "Nom invalide.") // Utilisation de common.IsValidName
 	if name == "" {
+		common.LogWarning("Nom de destination vide. Annulation de l'ajout.")
 		fmt.Printf("%sLe nom ne peut pas être vide.%s\n", colorRed, colorReset)
 		readInput("Appuyez sur Entrée pour continuer...")
 		return
@@ -1902,6 +2186,7 @@ func addBackupDestination() {
 	
 	// Vérifier si le nom existe déjà
 	if _, found := common.GetBackupDestination(name); found {
+		common.LogError("Une destination avec le nom '%s' existe déjà.", name)
 		fmt.Printf("%sUne destination avec ce nom existe déjà.%s\n", colorRed, colorReset)
 		readInput("Appuyez sur Entrée pour continuer...")
 		return
@@ -1916,9 +2201,12 @@ func addBackupDestination() {
 	typeChoice := readInput("\nType de destination [1]: ")
 	if typeChoice == "" || typeChoice == "1" {
 		destType = "local"
+		common.LogInfo("Type de destination sélectionné: local.")
 	} else if typeChoice == "2" {
 		destType = "rsync"
+		common.LogInfo("Type de destination sélectionné: rsync.")
 	} else {
+		common.LogWarning("Type de destination non valide: %s. Utilisation du type 'local' par défaut.", typeChoice)
 		fmt.Printf("%sType non valide. Utilisation du type 'local' par défaut.%s\n", colorYellow, colorReset)
 		destType = "local"
 	}
@@ -1929,8 +2217,9 @@ func addBackupDestination() {
 	
 	if destType == "local" {
 		// Pour une destination locale, demander le chemin
-		path = readInput("\nChemin de la destination: ")
+		path = readAndValidateInput("Chemin de la destination: ", common.IsValidPath, "Chemin invalide.") // Utilisation de common.IsValidPath
 		if path == "" {
+			common.LogWarning("Chemin de destination local vide. Annulation de l'ajout.")
 			fmt.Printf("%sLe chemin ne peut pas être vide.%s\n", colorRed, colorReset)
 			readInput("Appuyez sur Entrée pour continuer...")
 			return
@@ -1938,24 +2227,30 @@ func addBackupDestination() {
 		
 		// Vérifier si le répertoire existe, sinon proposer de le créer
 		if !common.DirExists(path) {
+			common.LogInfo("Répertoire de destination local '%s' n'existe pas. Demande de création.", path)
 			createDir := readInput(fmt.Sprintf("Le répertoire %s n'existe pas. Voulez-vous le créer? (o/n): ", path))
-			if createDir == "o" || createDir == "O" || createDir == "oui" || createDir == "Oui" {
+			if strings.ToLower(createDir) == "o" || strings.ToLower(createDir) == "oui" {
 				if err := os.MkdirAll(path, 0755); err != nil {
-					fmt.Printf("%sErreur lors de la création du répertoire: %s%s\n", colorRed, err, colorReset)
+					common.LogError("Erreur lors de la création du répertoire %s: %v", path, err)
+					fmt.Printf("%sErreur lors de la création du répertoire: %v%s\n", colorRed, err, colorReset)
 					readInput("Appuyez sur Entrée pour continuer...")
 					return
 				}
+				common.LogInfo("Répertoire %s créé avec succès.", path)
 				fmt.Printf("%sRépertoire créé avec succès.%s\n", colorGreen, colorReset)
 			} else {
+				common.LogInfo("Création de répertoire annulée par l'utilisateur pour %s.", path)
 				fmt.Printf("%sOpération annulée.%s\n", colorYellow, colorReset)
 				readInput("Appuyez sur Entrée pour continuer...")
 				return
 			}
 		}
 	} else if destType == "rsync" {
+		common.LogInfo("Configuration de la destination rsync.")
 		// Pour une destination rsync, sélectionner un serveur et un module
 		servers, err := common.GetRsyncServers()
 		if err != nil || len(servers) == 0 {
+			common.LogError("Aucun serveur rsync configuré. Impossible d'ajouter une destination rsync: %v", err)
 			fmt.Printf("%sAucun serveur rsync configuré. Veuillez d'abord ajouter un serveur.%s\n", colorRed, colorReset)
 			readInput("Appuyez sur Entrée pour continuer...")
 			return
@@ -1974,12 +2269,14 @@ func addBackupDestination() {
 			if idx, err := strconv.Atoi(serverChoice); err == nil && idx >= 1 && idx <= len(servers) {
 				serverIndex = idx - 1
 			} else {
+				common.LogWarning("Choix de serveur rsync non valide: %s. Utilisation du premier serveur.\n", serverChoice)
 				fmt.Printf("%sChoix non valide. Utilisation du premier serveur.%s\n", colorYellow, colorReset)
 			}
 		}
 		
 		selectedServer := servers[serverIndex]
 		rsyncServer = &selectedServer
+		common.LogInfo("Serveur rsync sélectionné pour la destination: %s.", selectedServer.Name)
 		
 		// Sélectionner un module si disponible
 		if len(selectedServer.Modules) > 0 {
@@ -1994,7 +2291,9 @@ func addBackupDestination() {
 			if moduleChoice != "" {
 				if idx, err := strconv.Atoi(moduleChoice); err == nil && idx >= 1 && idx <= len(selectedServer.Modules) {
 					selectedModule = selectedServer.Modules[idx-1]
+					common.LogInfo("Module rsync sélectionné: %s.", selectedModule)
 				} else {
+					common.LogWarning("Choix de module rsync invalide: %s. Utilisation du module par défaut.\n", moduleChoice)
 					fmt.Printf("%sChoix non valide. Utilisation du module par défaut.%s\n", colorYellow, colorReset)
 				}
 			}
@@ -2002,47 +2301,52 @@ func addBackupDestination() {
 			// Construire le chemin rsync
 			path = fmt.Sprintf("rsync://%s@%s/%s", selectedServer.Username, selectedServer.IP, selectedModule)
 		} else {
-			fmt.Printf("%sAucun module disponible pour ce serveur.%s\n", colorRed, colorReset)
-			readInput("Appuyez sur Entrée pour continuer...")
-			return
+			// Si aucun module, demander un chemin distant
+			path = readAndValidateInput("Chemin distant sur le serveur: ", common.IsValidPath, "Chemin invalide.") // Utilisation de common.IsValidPath
+			common.LogInfo("Chemin distant sur le serveur rsync: %s.", path)
 		}
 	}
 	
-	// Demander si c'est la destination par défaut
-	isDefault := false
-	if len(common.AppConfig.BackupDestinations) == 0 {
-		// Si c'est la première destination, elle est automatiquement par défaut
-		isDefault = true
-		fmt.Println("\nCette destination sera définie comme destination par défaut.")
-	} else {
-		defaultChoice := readInput("\nDéfinir comme destination par défaut? (o/n): ")
-		isDefault = defaultChoice == "o" || defaultChoice == "O" || defaultChoice == "oui" || defaultChoice == "Oui"
-	}
+	// Demander si cette destination doit être la destination par défaut
+	defaultDestStr := readInput("\nDéfinir comme destination par défaut? (o/n): ")
+	isDefaultDest := strings.ToLower(defaultDestStr) == "o"
 	
-	// Créer la destination
-	destination := common.BackupDestination{
+	// Créer la nouvelle destination
+	newDest := common.BackupDestination{
 		Name:        name,
 		Path:        path,
 		Type:        destType,
-		IsDefault:   isDefault,
+		IsDefault:   isDefaultDest,
 		RsyncServer: rsyncServer,
 	}
 	
 	// Ajouter la destination à la configuration
-	if err := common.AddBackupDestination(destination); err != nil {
-		fmt.Printf("%sErreur lors de l'ajout de la destination: %s%s\n", colorRed, err, colorReset)
+	if err := common.AddBackupDestination(newDest); err != nil {
+		common.LogError("Erreur lors de l'ajout de la destination de sauvegarde %s: %v", newDest.Name, err)
+		fmt.Printf("%sErreur lors de l'ajout de la destination: %v%s\n", colorRed, err, colorReset)
 	} else {
-		fmt.Printf("%sDestination ajoutée avec succès.%s\n", colorGreen, colorReset)
+		common.LogInfo("Destination de sauvegarde %s ajoutée avec succès.", newDest.Name)
+		fmt.Printf("%sDestination '%s' ajoutée avec succès.%s\n", colorGreen, name, colorReset)
 	}
 	
-	readInput("\nAppuyez sur Entrée pour continuer...")
+	readInput("Appuyez sur Entrée pour continuer...")
 }
 
-// editBackupDestination permet de modifier une destination existante
+// editBackupDestination permet de modifier une destination de sauvegarde existante
 func editBackupDestination() {
+	common.LogInfo("Début de la modification d'une destination de sauvegarde.")
 	if len(common.AppConfig.BackupDestinations) == 0 {
+		common.LogWarning("Aucune destination de sauvegarde à modifier.")
 		fmt.Printf("%sAucune destination à modifier.%s\n", colorYellow, colorReset)
-		readInput("Appuyez sur Entrée pour continuer...")
+		return
+	}
+	
+	idxStr := readInput("Numéro de la destination à modifier: ")
+	idx, err := strconv.Atoi(idxStr)
+	
+	if err != nil || idx < 1 || idx > len(common.AppConfig.BackupDestinations) {
+		common.LogError("Numéro de destination invalide pour modification: %s", idxStr)
+		fmt.Printf("%sNuméro invalide.%s\n", colorRed, colorReset)
 		return
 	}
 	
@@ -2067,7 +2371,6 @@ func editBackupDestination() {
 			destIndex = idx - 1
 		} else {
 			fmt.Printf("%sChoix non valide. Modification annulée.%s\n", colorRed, colorReset)
-			readInput("Appuyez sur Entrée pour continuer...")
 			return
 		}
 	}
@@ -2079,14 +2382,13 @@ func editBackupDestination() {
 	fmt.Printf("\nModification de la destination: %s\n\n", destination.Name)
 	
 	// Nom (ne peut pas être vide)
-	newName := readInput(fmt.Sprintf("Nouveau nom [%s]: ", destination.Name))
+	newName := readAndValidateInput(fmt.Sprintf("Nouveau nom [%s]: ", destination.Name), common.IsValidName, "Nom invalide.") // Utilisation de common.IsValidName
 	if newName != "" {
 		// Vérifier si le nouveau nom existe déjà pour une autre destination
 		if newName != destination.Name {
 			for _, dest := range common.AppConfig.BackupDestinations {
 				if dest.Name == newName {
 					fmt.Printf("%sUne destination avec ce nom existe déjà.%s\n", colorRed, colorReset)
-					readInput("Appuyez sur Entrée pour continuer...")
 					return
 				}
 			}
@@ -2096,16 +2398,16 @@ func editBackupDestination() {
 	
 	// Pour les destinations locales, permettre de modifier le chemin
 	if destination.Type == "local" {
-		newPath := readInput(fmt.Sprintf("Nouveau chemin [%s]: ", destination.Path))
+		newPath := readAndValidateInput(fmt.Sprintf("Nouveau chemin [%s]: ", destination.Path), common.IsValidPath, "Chemin invalide.") // Utilisation de common.IsValidPath
 		if newPath != "" {
 			destination.Path = newPath
 			
 			// Vérifier si le répertoire existe, sinon proposer de le créer
 			if !common.DirExists(newPath) {
 				createDir := readInput(fmt.Sprintf("Le répertoire %s n'existe pas. Voulez-vous le créer? (o/n): ", newPath))
-				if createDir == "o" || createDir == "O" || createDir == "oui" || createDir == "Oui" {
+				if strings.ToLower(createDir) == "o" || strings.ToLower(createDir) == "oui" {
 					if err := os.MkdirAll(newPath, 0755); err != nil {
-						fmt.Printf("%sErreur lors de la création du répertoire: %s%s\n", colorRed, err, colorReset)
+						fmt.Printf("%sErreur lors de la création du répertoire: %v%s\n", colorRed, err, colorReset)
 					} else {
 						fmt.Printf("%sRépertoire créé avec succès.%s\n", colorGreen, colorReset)
 					}
@@ -2170,44 +2472,51 @@ func editBackupDestination() {
 				}
 			}
 		}
-	}
-	
-	// Définir comme destination par défaut
-	if !destination.IsDefault {
-		defaultChoice := readInput("\nDéfinir comme destination par défaut? (o/n): ")
-		if defaultChoice == "o" || defaultChoice == "O" || defaultChoice == "oui" || defaultChoice == "Oui" {
-			destination.IsDefault = true
-			
-			// Mettre à jour les autres destinations
-			for i := range common.AppConfig.BackupDestinations {
-				if i != destIndex {
-					common.AppConfig.BackupDestinations[i].IsDefault = false
+		
+		// Définir comme destination par défaut
+		if !destination.IsDefault {
+			defaultChoice := readInput("\nDéfinir comme destination par défaut? (o/n): ")
+			if defaultChoice == "o" || defaultChoice == "O" || defaultChoice == "oui" || defaultChoice == "Oui" {
+				destination.IsDefault = true
+				
+				// Mettre à jour les autres destinations
+				for i := range common.AppConfig.BackupDestinations {
+					if i != destIndex {
+						common.AppConfig.BackupDestinations[i].IsDefault = false
+					}
 				}
+				
+				// Mettre à jour aussi le champ BackupDestination pour compatibilité
+				common.AppConfig.BackupDestination = destination.Path
 			}
-			
-			// Mettre à jour aussi le champ BackupDestination pour compatibilité
-			common.AppConfig.BackupDestination = destination.Path
 		}
+		
+		// Mettre à jour la destination
+		common.AppConfig.BackupDestinations[destIndex] = destination
+		
+		// Sauvegarder la configuration
+		if err := common.SaveConfig(common.AppConfig); err != nil {
+			fmt.Printf("%sErreur lors de la sauvegarde de la configuration: %v%s\n", colorRed, err, colorReset)
+		} else {
+			fmt.Printf("%sDestination modifiée avec succès.%s\n", colorGreen, colorReset)
+		}
+		
+		readInput("\nAppuyez sur Entrée pour continuer...")
 	}
-	
-	// Mettre à jour la destination
-	common.AppConfig.BackupDestinations[destIndex] = destination
-	
-	// Sauvegarder la configuration
-	if err := common.SaveConfig(common.AppConfig); err != nil {
-		fmt.Printf("%sErreur lors de la sauvegarde de la configuration: %s%s\n", colorRed, err, colorReset)
-	} else {
-		fmt.Printf("%sDestination modifiée avec succès.%s\n", colorGreen, colorReset)
-	}
-	
-	readInput("\nAppuyez sur Entrée pour continuer...")
 }
 
 // deleteBackupDestination permet de supprimer une destination de sauvegarde
 func deleteBackupDestination() {
 	if len(common.AppConfig.BackupDestinations) == 0 {
 		fmt.Printf("%sAucune destination à supprimer.%s\n", colorYellow, colorReset)
-		readInput("Appuyez sur Entrée pour continuer...")
+		return
+	}
+	
+	idxStr := readInput("Numéro de la destination à supprimer: ")
+	idx, err := strconv.Atoi(idxStr)
+	
+	if err != nil || idx < 1 || idx > len(common.AppConfig.BackupDestinations) {
+		fmt.Printf("%sNuméro invalide.%s\n", colorRed, colorReset)
 		return
 	}
 	
@@ -2232,7 +2541,6 @@ func deleteBackupDestination() {
 			destIndex = idx - 1
 		} else {
 			fmt.Printf("%sChoix non valide. Suppression annulée.%s\n", colorRed, colorReset)
-			readInput("Appuyez sur Entrée pour continuer...")
 			return
 		}
 	}
@@ -2244,7 +2552,6 @@ func deleteBackupDestination() {
 	confirm := readInput(fmt.Sprintf("\nÊtes-vous sûr de vouloir supprimer la destination '%s'? (o/n): ", destination.Name))
 	if confirm != "o" && confirm != "O" && confirm != "oui" && confirm != "Oui" {
 		fmt.Printf("%sSuppression annulée.%s\n", colorYellow, colorReset)
-		readInput("Appuyez sur Entrée pour continuer...")
 		return
 	}
 	
@@ -2256,69 +2563,56 @@ func deleteBackupDestination() {
 	
 	// Supprimer la destination
 	if err := common.DeleteBackupDestination(destination.Name); err != nil {
-		fmt.Printf("%sErreur lors de la suppression de la destination: %s%s\n", colorRed, err, colorReset)
+		fmt.Printf("%sErreur lors de la suppression de la destination: %v%s\n", colorRed, err, colorReset)
 	} else {
 		fmt.Printf("%sDestination supprimée avec succès.%s\n", colorGreen, colorReset)
 	}
 	
-	readInput("\nAppuyez sur Entrée pour continuer...")
+	return
 }
 
-// setDefaultDestination permet de définir la destination par défaut
+// setDefaultDestination permet de définir une destination par défaut
 func setDefaultDestination() {
+	common.LogInfo("Début de la définition de la destination par défaut.")
 	if len(common.AppConfig.BackupDestinations) == 0 {
-		fmt.Printf("%sAucune destination configurée.%s\n", colorYellow, colorReset)
-		readInput("Appuyez sur Entrée pour continuer...")
+		common.LogWarning("Aucune destination de sauvegarde à définir par défaut.")
+		fmt.Printf("%sAucune destination à définir par défaut.%s\n", colorYellow, colorReset)
 		return
 	}
 	
-	clearScreen()
-	fmt.Printf("%sDéfinition de la Destination par Défaut%s\n\n", colorBold, colorReset)
-	
-	// Afficher la liste des destinations
 	fmt.Println("Destinations disponibles:")
 	for i, dest := range common.AppConfig.BackupDestinations {
 		defaultMark := ""
 		if dest.IsDefault {
-			defaultMark = fmt.Sprintf(" %s(Par défaut)%s", colorGreen, colorReset)
+			defaultMark = " (Par défaut)"
 		}
-		fmt.Printf("  %d. %s (%s)%s\n", i+1, dest.Name, dest.Type, defaultMark)
+		fmt.Printf("%d. %s%s\n", i+1, dest.Name, defaultMark)
 	}
 	
-	// Sélectionner une destination
-	destChoice := readInput("\nSélectionnez une destination à définir comme par défaut [1]: ")
-	destIndex := 0
-	if destChoice != "" {
-		if idx, err := strconv.Atoi(destChoice); err == nil && idx >= 1 && idx <= len(common.AppConfig.BackupDestinations) {
-			destIndex = idx - 1
-		} else {
-			fmt.Printf("%sChoix non valide. Opération annulée.%s\n", colorRed, colorReset)
-			readInput("Appuyez sur Entrée pour continuer...")
-			return
-		}
-	}
+	idxStr := readInput("Sélectionnez la destination par défaut (numéro): ")
+	idx, err := strconv.Atoi(idxStr)
 	
-	// Vérifier si la destination est déjà par défaut
-	if common.AppConfig.BackupDestinations[destIndex].IsDefault {
-		fmt.Printf("%sCette destination est déjà définie comme destination par défaut.%s\n", colorYellow, colorReset)
-		readInput("Appuyez sur Entrée pour continuer...")
+	if err != nil || idx < 1 || idx > len(common.AppConfig.BackupDestinations) {
+		common.LogError("Numéro de destination invalide pour la définition par défaut: %s", idxStr)
+		fmt.Printf("%sNuméro invalide.%s\n", colorRed, colorReset)
 		return
 	}
 	
-	// Mettre à jour toutes les destinations
+	// Désactiver le flag par défaut pour toutes les destinations
 	for i := range common.AppConfig.BackupDestinations {
-		common.AppConfig.BackupDestinations[i].IsDefault = (i == destIndex)
+		common.AppConfig.BackupDestinations[i].IsDefault = false
 	}
 	
-	// Mettre à jour le champ BackupDestination pour compatibilité
-	common.AppConfig.BackupDestination = common.AppConfig.BackupDestinations[destIndex].Path
+	// Définir la nouvelle destination par défaut
+	common.AppConfig.BackupDestinations[idx-1].IsDefault = true
+	common.AppConfig.BackupDestination = common.AppConfig.BackupDestinations[idx-1].Path
 	
-	// Sauvegarder la configuration
 	if err := common.SaveConfig(common.AppConfig); err != nil {
-		fmt.Printf("%sErreur lors de la sauvegarde de la configuration: %s%s\n", colorRed, err, colorReset)
-	} else {
-		fmt.Printf("%sDestination par défaut modifiée avec succès.%s\n", colorGreen, colorReset)
+		common.LogError("Erreur lors de la mise à jour de la destination par défaut: %v", err)
+		fmt.Printf("%sErreur lors de la mise à jour de la configuration: %v%s\n", colorRed, err, colorReset)
+		return
 	}
 	
-	readInput("\nAppuyez sur Entrée pour continuer...")
+	common.LogInfo("Destination par défaut mise à jour avec succès.")
+	fmt.Printf("%sDestination par défaut mise à jour avec succès.%s\n", colorGreen, colorReset)
 }
