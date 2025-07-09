@@ -46,6 +46,8 @@ func main() {
 		ui.HandleManageCommand(os.Args[2:])
 	case "discover":
 		ui.HandleDiscoverCommand(os.Args[2:])
+	case "add":
+		ui.HandleAddCommand(os.Args[2:])
 	case "--help", "-h":
 		printHelp()
 	case "--version", "-v":
@@ -131,6 +133,7 @@ func printHelp() {
 	fmt.Println("  restore   Restaurer une sauvegarde existante")
 	fmt.Println("  manage    Gérer les sauvegardes existantes")
 	fmt.Println("  discover  Découvrir les serveurs rsync sur le réseau")
+	fmt.Println("  add       Ajouter une nouvelle configuration (ex: add server)")
 	fmt.Println("  --help    Afficher cette aide")
 	fmt.Println("  --version Afficher la version")
 	fmt.Println()
