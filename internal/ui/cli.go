@@ -217,6 +217,42 @@ func HandleManageCommand(args []string) {
 	}
 }
 
+// HandleDiscoverCommand traite la commande 'discover' depuis la ligne de commande
+func HandleDiscoverCommand(args []string) {
+	common.LogInfo("Traitement de la commande 'discover' avec les arguments: %v", args)
+	subnetCIDR := ""
+	if len(args) > 0 {
+		subnetCIDR = args[0]
+		if !common.IsValidSubnet(subnetCIDR) {
+			common.LogError("Format CIDR invalide fourni pour discover: %s", subnetCIDR)
+			fmt.Fprintf(os.Stderr, "Erreur: Format CIDR invalide (ex: 192.168.0.0/24): %s\n", subnetCIDR)
+			os.Exit(1)
+		}
+	} else {
+		// TODO: Essayer de déterminer le sous-réseau local automatiquement
+		subnetCIDR = "192.168.0.0/24"
+		common.LogInfo("Aucun sous-réseau fourni, utilisation de la valeur par défaut: %s", subnetCIDR)
+	}
+
+	fmt.Printf("Recherche de serveurs rsync sur %s...\n", subnetCIDR)
+	servers := runDiscovery(subnetCIDR)
+
+	if len(servers) == 0 {
+		common.LogInfo("Aucun serveur rsync trouvé sur le réseau %s.", subnetCIDR)
+		fmt.Println("Aucun serveur rsync trouvé.")
+		return
+	}
+
+	fmt.Printf("\n%d serveur(s) rsync trouvé(s):\n", len(servers))
+	for _, server := range servers {
+		serverName := server.IP
+		if server.Hostname != "" {
+			serverName = server.Hostname
+		}
+		fmt.Printf("- %s (%s)\n", serverName, server.IP)
+	}
+}
+
 // configureBackup permet de configurer une nouvelle sauvegarde
 func configureBackup() {
 	common.LogInfo("Début de la configuration d'une nouvelle sauvegarde.")
@@ -973,7 +1009,7 @@ func ShowMainMenu() {
 	}
 }
 
-// discoverRsyncServers recherche et configure les serveurs rsync sur le réseau
+// discoverRsyncServers recherche et configure les serveurs rsync sur le réseau (mode interactif)
 func discoverRsyncServers() {
 	common.LogInfo("Début de la découverte des serveurs rsync.")
 	clearScreen()
@@ -989,15 +1025,7 @@ func discoverRsyncServers() {
 		common.LogInfo("Sous-réseau par défaut utilisé pour la découverte: %s", subnetCIDR)
 	}
 	
-	// Afficher un message d'attente
-	fmt.Printf("\nRecherche de serveurs rsync sur %s...\n", subnetCIDR)
-	fmt.Println("Cela peut prendre jusqu'à 30 secondes. Veuillez patienter...")
-	
-	// Créer l'objet de découverte
-	discovery := wrappers.NewRsyncDiscovery()
-	
-	// Scanner le réseau (timeout de 30 secondes)
-	servers := discovery.ScanNetwork(subnetCIDR, 30)
+	servers := runDiscovery(subnetCIDR)
 	
 	if len(servers) == 0 {
 		common.LogInfo("Aucun serveur rsync trouvé sur le réseau %s.", subnetCIDR)
@@ -1051,6 +1079,19 @@ func discoverRsyncServers() {
 	selectedServer := servers[choice-1]
 	common.LogInfo("Serveur %s sélectionné pour la configuration.", selectedServer.IP)
 	configureRsyncServer(selectedServer)
+}
+
+// runDiscovery exécute la logique de découverte de réseau et retourne les serveurs trouvés.
+func runDiscovery(subnetCIDR string) []wrappers.RsyncServer {
+	// Afficher un message d'attente
+	fmt.Printf("\nRecherche de serveurs rsync sur %s...\n", subnetCIDR)
+	fmt.Println("Cela peut prendre jusqu'à 30 secondes. Veuillez patienter...")
+	
+	// Créer l'objet de découverte
+	discovery := wrappers.NewRsyncDiscovery()
+	
+	// Scanner le réseau (timeout de 30 secondes)
+	return discovery.ScanNetwork(subnetCIDR, 30)
 }
 
 // configureRsyncServer configure un serveur rsync sélectionné
