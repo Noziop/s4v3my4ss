@@ -25,14 +25,12 @@ func IsValidPath(path string) bool {
 	}
 	// SECURITY: Interdire la traversée de répertoires ("..").
 	if strings.Contains(path, "..") {
-		// fmt.Printf("%sLa traversée de répertoire ('..') est interdite.%s\n", colorRed, colorReset) // Ne pas afficher ici, c'est une fonction utilitaire
 		return false
 	}
 	// SECURITY: S'assurer que le chemin ne contient pas de caractères d'injection de commande.
-	// Autorise les caractères alphanumériques, slashes, points, tirets, underscores, tilde, et deux-points (pour Windows).
-	re := regexp.MustCompile(`^[a-zA-Z0-9_/\-.~:]+$`)
+	// Autorise les caractères alphanumériques, slashes, points, tirets, underscores, tilde, arobases et deux-points.
+	re := regexp.MustCompile(`^[a-zA-Z0-9_/@.~:-]+$`)
 	if !re.MatchString(path) {
-		// fmt.Printf("%sLe chemin contient des caractères non autorisés.%s\n", colorRed, colorReset) // Ne pas afficher ici
 		return false
 	}
 	return true

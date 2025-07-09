@@ -24,9 +24,6 @@ func main() {
 	// Configurer la gestion des signaux pour une interruption propre
 	setupSignalHandling()
 
-	// Affichage du logo et du titre
-	printHeader()
-
 	// Initialisation de l'application
 	if err := common.InitApp(); err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur d'initialisation: %v\n", err)
