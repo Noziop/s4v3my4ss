@@ -1,6 +1,8 @@
 package common
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"os"
@@ -11,8 +13,11 @@ import (
 	"time"
 )
 
-// Couleurs pour le terminal
 const (
+	// CommandName est le nom de la commande principale de l'application.
+	CommandName = "saveme"
+
+	// Couleurs pour le terminal
 	ColorRed    = "\033[0;31m"
 	ColorGreen  = "\033[0;32m"
 	ColorYellow = "\033[0;33m"
@@ -135,4 +140,60 @@ func GenerateRandomString(length int) string {
 		b[i] = charset[seededRand.Intn(len(charset))]
 	}
 	return string(b)
+}
+
+// GenerateBackupID génère un ID unique pour une sauvegarde
+func GenerateBackupID(name string) string {
+	// Format: name_date_hash
+	timestamp := time.Now().Format("20060102_150405")
+
+	// Ajouter une valeur aléatoire pour garantir l'unicité
+	hash := sha256.Sum256([]byte(name + timestamp + fmt.Sprintf("%d", time.Now().UnixNano())))
+	shortHash := hex.EncodeToString(hash[:3]) // Utiliser seulement les 6 premiers caractères
+
+	// Nettoyer le nom pour qu'il soit utilisable dans un nom de fichier
+	safeName := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			return r
+		}
+		return '_'
+	}, name)
+
+	return fmt.Sprintf("%s_%s_%s", safeName, timestamp, shortHash)
+}
+
+// GetDirSize calcule la taille totale d'un répertoire en octets
+func GetDirSize(path string) (int64, error) {
+	var size int64
+	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			LogError("Erreur lors du calcul de la taille du répertoire %s: %v", path, err)
+			return err
+		}
+		if !info.IsDir() {
+			size += info.Size()
+		}
+		return nil
+	})
+	return size, err
+}
+
+// FormatSize convertit une taille en octets en une chaîne lisible
+func FormatSize(size int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+
+	switch {
+	case size >= GB:
+		return fmt.Sprintf("%.1f GB", float64(size)/float64(GB))
+	case size >= MB:
+		return fmt.Sprintf("%.1f MB", float64(size)/float64(MB))
+	case size >= KB:
+		return fmt.Sprintf("%.1f KB", float64(size)/float64(KB))
+	default:
+		return fmt.Sprintf("%d B", size)
+	}
 }

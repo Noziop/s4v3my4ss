@@ -5,9 +5,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"io/ioutil"
-	"path/filepath"
 	"github.com/Noziop/s4v3my4ss/internal/ui"
+	"github.com/Noziop/s4v3my4ss/internal/ui/commands"
 	"github.com/Noziop/s4v3my4ss/pkg/common"
 )
 
@@ -39,15 +38,15 @@ func main() {
 	// Sinon, traiter les arguments de ligne de commande
 	switch os.Args[1] {
 	case "watch", "--watch", "-w":
-		ui.HandleWatchCommand(os.Args[2:])
+		commands.HandleWatchCommand(os.Args[2:])
 	case "restore", "--restore", "-r":
-		ui.HandleRestoreCommand(os.Args[2:])
+		commands.HandleRestoreCommand(os.Args[2:])
 	case "manage", "--manage", "-m":
 		ui.HandleManageCommand(os.Args[2:])
 	case "discover":
 		ui.HandleDiscoverCommand(os.Args[2:])
 	case "add":
-		ui.HandleAddCommand(os.Args[2:])
+		commands.HandleAddCommand(os.Args[2:])
 	case "--help", "-h":
 		printHelp()
 	case "--version", "-v":
@@ -80,47 +79,7 @@ func setupSignalHandling() {
 	}()
 }
 
-// Affiche l'en-tête de l'application
-func printHeader() {
-	blue := "\033[0;34m"
-	bold := "\033[1m"
-	nc := "\033[0m" // No Color
 
-	// Essayer de lire le fichier banner.txt
-	execPath, err := os.Executable()
-	var bannerPath string
-	if err == nil {
-		// Chercher le banner par rapport à l'emplacement de l'exécutable
-		bannerPath = filepath.Join(filepath.Dir(execPath), "..", "banner.txt")
-	}
-	
-	// Si on ne trouve pas le banner à partir de l'exécutable, essayer dans le répertoire actuel
-	if _, err := os.Stat(bannerPath); os.IsNotExist(err) {
-		// Essayer dans le répertoire projet
-		bannerPath = filepath.Join(".", "banner.txt")
-		// Si toujours pas trouvé, utiliser un chemin absolu pour le développement
-		if _, err := os.Stat(bannerPath); os.IsNotExist(err) {
-			bannerPath = "/home/noziop/projects/s4v3my4ss/Projet Go/banner.txt"
-		}
-	}
-
-	// Lire le fichier banner s'il existe
-	if bannerContent, err := ioutil.ReadFile(bannerPath); err == nil {
-		fmt.Printf("%s%s", blue, bold)
-		fmt.Println(string(bannerContent))
-		fmt.Printf("%s\n", nc)
-	} else {
-		// Fallback sur l'ASCII art codé en dur en cas d'échec
-		fmt.Printf("%s%s", blue, bold)
-		fmt.Println("  ___ _ _  _               __  __  ___ ")
-		fmt.Println(" / __| | \\| |  ___  /\\ /\\ /__\\/__\\|_  )")
-		fmt.Println(" \\__ \\ | .` | / -_)/ _  //_\\ / \\/ / / / ")
-		fmt.Println(" |___/_|_|\\_| \\___|\\__,_/\\__/\\__//___| ")
-		fmt.Printf("%s\n", nc)
-	}
-
-	fmt.Printf("%sSystème de Sauvegarde et Restauration Automatique%s\n\n", bold, nc)
-}
 
 // Affiche l'aide de l'application
 func printHelp() {
