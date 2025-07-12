@@ -20,7 +20,7 @@ func WatchDirectoryInteractive() {
 	configs := common.AppConfig.BackupDirs
 	if len(configs) == 0 {
 		common.LogWarning("Aucune configuration de sauvegarde disponible pour la surveillance.")
-		fmt.Printf("%sAucune configuration de sauvegarde n'est est disponible.%s\n", display.ColorYellow(), display.ColorReset())
+		input.DisplayMessage(false, "Aucune configuration de sauvegarde n'est disponible.")
 		fmt.Println("Veuillez d'abord créer une configuration.")
 		return
 	}
@@ -34,8 +34,7 @@ func WatchDirectoryInteractive() {
 	idxStr := input.ReadInput("Sélectionnez une configuration (numéro): ")
 	idx, err := strconv.Atoi(idxStr)
 	if err != nil || idx < 1 || idx > len(configs) {
-		common.LogError("Choix de configuration invalide pour la surveillance: %s", idxStr)
-		fmt.Printf("%sChoix invalide.%s\n", display.ColorRed(), display.ColorReset())
+		input.DisplayMessage(true, "Choix invalide.")
 		return
 	}
 	
@@ -63,7 +62,7 @@ func WatchDirectoryInteractive() {
 		go func() {
 			if err := watch.StartWatchWithCallback(config, done); err != nil {
 				common.LogError("Erreur lors de la surveillance avec callback pour %s: %v", config.Name, err)
-				fmt.Printf("%sErreur lors de la surveillance: %v%s\n", display.ColorRed, err, display.ColorReset)
+				input.DisplayMessage(true, "Erreur lors de la surveillance: %v", err)
 			}
 		}()
 		

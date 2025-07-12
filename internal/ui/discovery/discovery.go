@@ -30,8 +30,7 @@ func DiscoverRsyncServers() {
 	servers := runDiscovery(subnetCIDR)
 
 	if len(servers) == 0 {
-		common.LogInfo("Aucun serveur rsync trouvé sur le réseau %s.", subnetCIDR)
-		fmt.Printf("\n%sAucun serveur rsync trouvé sur le réseau.%s\n", display.ColorYellow(), display.ColorReset())
+		input.DisplayMessage(false, "Aucun serveur rsync trouvé sur le réseau %s.", subnetCIDR)
 		fmt.Println("Vérifiez que:")
 		fmt.Println("1. Le service rsync est activé sur votre NAS ou serveur")
 		fmt.Println("2. Le port rsync (873) est ouvert dans le pare-feu")
@@ -41,7 +40,7 @@ func DiscoverRsyncServers() {
 
 	common.LogInfo("%d serveurs rsync trouvés sur le réseau %s.", len(servers), subnetCIDR)
 	// Afficher les serveurs trouvés
-	fmt.Printf("\n%s%d serveurs rsync trouvés:%s\n\n", display.ColorGreen(), len(servers), display.ColorReset())
+	input.DisplayMessage(false, "%d serveurs rsync trouvés:", len(servers))
 
 	for i, server := range servers {
 		serverName := server.IP
@@ -71,8 +70,7 @@ func DiscoverRsyncServers() {
 
 	if err != nil || choice < 1 || choice > len(servers) {
 		if choiceStr != "0" {
-			common.LogWarning("Choix de serveur invalide pour la configuration: %s", choiceStr)
-			fmt.Printf("\n%sChoix invalide.%s\n", display.ColorRed(), display.ColorReset())
+			input.DisplayMessage(true, "Choix invalide.")
 		}
 		return
 	}
@@ -106,7 +104,7 @@ func configureRsyncServer(server wrappers.RsyncServer) {
 	}
 
 	fmt.Printf("%sConfiguration du serveur rsync: %s (%s)%s\n\n",
-		display.ColorBold, serverName, server.IP, display.ColorReset)
+		display.ColorBold(), serverName, server.IP, display.ColorReset())
 
 	// Demander un nom pour le serveur
 	defaultName := serverName
@@ -161,11 +159,9 @@ func configureRsyncServer(server wrappers.RsyncServer) {
 
 	// Enregistrer le serveur dans la configuration
 	if err := common.AddRsyncServer(serverConfig); err != nil {
-		common.LogError("Erreur lors de la sauvegarde de la configuration du serveur rsync %s: %v", serverConfig.Name, err)
-		fmt.Printf("\n%sErreur lors de la sauvegarde de la configuration: %v%s\n", display.ColorRed(), err, display.ColorReset())
+		input.DisplayMessage(true, "Erreur lors de la sauvegarde de la configuration: %v", err)
 	} else {
-		common.LogInfo("Serveur rsync %s configuré avec succès.", serverConfig.Name)
-		fmt.Printf("\n%sServeur rsync %s configuré avec succès!%s\n", display.ColorGreen, name, display.ColorReset)
+		input.DisplayMessage(false, "Serveur rsync %s configuré avec succès!", name)
 	}
 
 	// Proposer de configurer une sauvegarde vers ce serveur

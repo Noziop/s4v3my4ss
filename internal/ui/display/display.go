@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/Noziop/s4v3my4ss/pkg/common"
@@ -134,4 +135,28 @@ func ColorCyan() string {
 }
 func ColorWhite() string {
 	return "\033[0;37m"
+}
+
+// DisplayConfigList affiche une liste d'éléments de configuration de manière générique.
+// items est la slice d'éléments à afficher.
+// header est le titre de la liste.
+// itemDisplayFunc est une fonction de rappel qui prend l'index et l'élément, et retourne la chaîne à afficher pour cet élément.
+func DisplayConfigList(items interface{}, header string, itemDisplayFunc func(index int, item interface{}) string) {
+	val := reflect.ValueOf(items)
+	if val.Kind() != reflect.Slice {
+		common.LogError("DisplayConfigList attend une slice, a reçu %s", val.Kind())
+		return
+	}
+
+	fmt.Printf("%s%s:%s\n", ColorBold(), header, ColorReset())
+
+	if val.Len() == 0 {
+		fmt.Printf("%sAucun élément configuré.%s\n\n", ColorYellow(), ColorReset())
+		return
+	}
+
+	for i := 0; i < val.Len(); i++ {
+		fmt.Println(itemDisplayFunc(i, val.Index(i).Interface()))
+	}
+	fmt.Println()
 }

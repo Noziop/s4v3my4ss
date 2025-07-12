@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
+	"reflect"
 	"strings"
+	"time"
 )
 
 // Config représente la configuration globale de l'application
@@ -234,7 +235,10 @@ func SaveConfig(config Config) error {
 
 // AddBackupDirectory ajoute un répertoire à sauvegarder à la configuration
 func AddBackupDirectory(config BackupConfig) error {
-	AppConfig.BackupDirs = append(AppConfig.BackupDirs, config)
+	if err := AddConfigItem(&AppConfig.BackupDirs, config, "Name"); err != nil {
+		LogError("Impossible d'ajouter le répertoire de sauvegarde '%s': %v", config.Name, err)
+		return err
+	}
 	if err := SaveConfig(AppConfig); err != nil {
 		LogError("Impossible d'ajouter le répertoire de sauvegarde '%s': %v", config.Name, err)
 		return err
@@ -245,10 +249,8 @@ func AddBackupDirectory(config BackupConfig) error {
 
 // GetBackupConfig récupère la configuration d'un répertoire de sauvegarde par son nom
 func GetBackupConfig(name string) (BackupConfig, bool) {
-	for _, cfg := range AppConfig.BackupDirs {
-		if cfg.Name == name {
-			return cfg, true
-		}
+	if item, found := GetConfigItem(&AppConfig.BackupDirs, name, "Name"); found {
+		return item.(BackupConfig), true
 	}
 	return BackupConfig{}, false
 }
@@ -261,19 +263,22 @@ func AddBackupDestination(dest BackupDestination) error {
 			AppConfig.BackupDestinations[i].IsDefault = false
 		}
 	}
-	
+
 	// Si aucune destination n'est définie comme par défaut, marquer celle-ci comme par défaut
 	if len(AppConfig.BackupDestinations) == 0 {
 		dest.IsDefault = true
 	}
-	
-	AppConfig.BackupDestinations = append(AppConfig.BackupDestinations, dest)
-	
+
+	if err := AddConfigItem(&AppConfig.BackupDestinations, dest, "Name"); err != nil {
+		LogError("Impossible d'ajouter la destination de sauvegarde '%s': %v", dest.Name, err)
+		return err
+	}
+
 	// Mettre à jour aussi le champ BackupDestination pour compatibilité
 	if dest.IsDefault {
 		AppConfig.BackupDestination = dest.Path
 	}
-	
+
 	if err := SaveConfig(AppConfig); err != nil {
 		LogError("Impossible d'ajouter la destination de sauvegarde '%s': %v", dest.Name, err)
 		return err
@@ -319,60 +324,54 @@ func GetDefaultBackupDestination() (BackupDestination, bool) {
 
 // GetBackupDestination récupère une destination de sauvegarde par son nom
 func GetBackupDestination(name string) (BackupDestination, bool) {
-	for _, dest := range AppConfig.BackupDestinations {
-		if dest.Name == name {
-			return dest, true
-		}
+	if item, found := GetConfigItem(&AppConfig.BackupDestinations, name, "Name"); found {
+		return item.(BackupDestination), true
 	}
 	return BackupDestination{}, false
 }
 
 // DeleteBackupDestination supprime une destination de sauvegarde
 func DeleteBackupDestination(name string) error {
-	for i, dest := range AppConfig.BackupDestinations {
-		if dest.Name == name {
-			// Vérifier si c'est la destination par défaut
-			isDefault := dest.IsDefault
-			
-			// Supprimer la destination
-			AppConfig.BackupDestinations = append(
-				AppConfig.BackupDestinations[:i],
-				AppConfig.BackupDestinations[i+1:]...,
-			)
-			
-			// Si c'était la destination par défaut, définir une nouvelle destination par défaut
-			if isDefault && len(AppConfig.BackupDestinations) > 0 {
-				AppConfig.BackupDestinations[0].IsDefault = true
-				AppConfig.BackupDestination = AppConfig.BackupDestinations[0].Path
-			}
-			
-			if err := SaveConfig(AppConfig); err != nil {
-				LogError("Impossible de supprimer la destination de sauvegarde '%s': %v", name, err)
-				return err
-			}
-			LogSecurity("Destination de sauvegarde '%s' supprimée de la configuration.", name)
-			return nil
-		}
+	// Trouver la destination à supprimer pour vérifier si c'est la destination par défaut
+	var isDefault bool
+	if item, found := GetConfigItem(&AppConfig.BackupDestinations, name, "Name"); found {
+		isDefault = item.(BackupDestination).IsDefault
+	} else {
+		LogError("Destination de sauvegarde '%s' non trouvée pour suppression.", name)
+		return fmt.Errorf("destination de sauvegarde '%s' non trouvée", name)
 	}
-	LogError("Destination de sauvegarde '%s' non trouvée pour suppression.", name)
-	return fmt.Errorf("destination de sauvegarde '%s' non trouvée", name)
+
+	if err := DeleteConfigItem(&AppConfig.BackupDestinations, name, "Name"); err != nil {
+		LogError("Impossible de supprimer la destination de sauvegarde '%s': %v", name, err)
+		return err
+	}
+
+	// Si c'était la destination par défaut, définir une nouvelle destination par défaut
+	if isDefault && len(AppConfig.BackupDestinations) > 0 {
+		AppConfig.BackupDestinations[0].IsDefault = true
+		AppConfig.BackupDestination = AppConfig.BackupDestinations[0].Path
+	}
+
+	if err := SaveConfig(AppConfig); err != nil {
+		LogError("Impossible de supprimer la destination de sauvegarde '%s': %v", name, err)
+		return err
+	}
+	LogSecurity("Destination de sauvegarde '%s' supprimée de la configuration.", name)
+	return nil
 }
 
 // UpdateBackupDestination met à jour une destination de sauvegarde
 func UpdateBackupDestination(name string, newDest BackupDestination) error {
-	for i, dest := range AppConfig.BackupDestinations {
-		if dest.Name == name {
-			AppConfig.BackupDestinations[i] = newDest
-			if err := SaveConfig(AppConfig); err != nil {
-				LogError("Impossible de mettre à jour la destination de sauvegarde '%s': %v", name, err)
-				return err
-			}
-			LogSecurity("Destination de sauvegarde '%s' mise à jour dans la configuration.", name)
-			return nil
-		}
+	if err := UpdateConfigItem(&AppConfig.BackupDestinations, name, newDest, "Name"); err != nil {
+		LogError("Impossible de mettre à jour la destination de sauvegarde '%s': %v", name, err)
+		return err
 	}
-	LogError("Destination de sauvegarde '%s' non trouvée pour mise à jour.", name)
-	return fmt.Errorf("destination de sauvegarde '%s' non trouvée", name)
+	if err := SaveConfig(AppConfig); err != nil {
+		LogError("Impossible de mettre à jour la destination de sauvegarde '%s': %v", name, err)
+		return err
+	}
+	LogSecurity("Destination de sauvegarde '%s' mise à jour dans la configuration.", name)
+	return nil
 }
 
 // SetDefaultBackupDestination définit une destination de sauvegarde par défaut
@@ -393,6 +392,7 @@ func SetDefaultBackupDestination(name string) error {
 		return fmt.Errorf("destination de sauvegarde '%s' non trouvée", name)
 	}
 
+	// Sauvegarder la configuration après avoir mis à jour les flags IsDefault
 	if err := SaveConfig(AppConfig); err != nil {
 		LogError("Impossible de définir la destination par défaut sur '%s': %v", name, err)
 		return err
@@ -411,22 +411,11 @@ func AddRsyncServer(server RsyncServerConfig) error {
 		return err
 	}
 
-	// Vérifier si un serveur avec le même nom existe déjà
-	for i, s := range AppConfig.RsyncServers {
-		if s.Name == server.Name {
-			// Mise à jour du serveur existant
-			AppConfig.RsyncServers[i] = server
-			if err := SaveConfig(AppConfig); err != nil {
-				LogError("Impossible de mettre à jour le serveur rsync '%s': %v", server.Name, err)
-				return err
-			}
-			LogSecurity("Serveur rsync '%s' mis à jour dans la configuration.", server.Name)
-			return nil
-		}
+	if err := AddConfigItem(&AppConfig.RsyncServers, server, "Name"); err != nil {
+		LogError("Impossible d'ajouter le serveur rsync '%s': %v", server.Name, err)
+		return err
 	}
 
-	// Ajouter le nouveau serveur
-	AppConfig.RsyncServers = append(AppConfig.RsyncServers, server)
 	if err := SaveConfig(AppConfig); err != nil {
 		LogError("Impossible d'ajouter le serveur rsync '%s': %v", server.Name, err)
 		return err
@@ -448,15 +437,15 @@ func GetRsyncServers() ([]RsyncServerConfig, error) {
 
 // GetRsyncServer retourne un serveur rsync par son nom
 func GetRsyncServer(name string) (*RsyncServerConfig, error) {
-	servers, err := GetRsyncServers()
+	err := ensureConfigLoaded()
 	if err != nil {
+		LogError("Impossible de charger la configuration pour récupérer les serveurs rsync: %v", err)
 		return nil, err
 	}
 
-	for _, server := range servers {
-		if server.Name == name {
-			return &server, nil
-		}
+	if item, found := GetConfigItem(&AppConfig.RsyncServers, name, "Name"); found {
+		server := item.(RsyncServerConfig)
+		return &server, nil
 	}
 	LogError("Serveur rsync '%s' non trouvé.", name)
 	return nil, fmt.Errorf("serveur rsync '%s' non trouvé", name)
@@ -470,20 +459,17 @@ func DeleteRsyncServer(name string) error {
 		return err
 	}
 
-	for i, server := range AppConfig.RsyncServers {
-		if server.Name == name {
-			// Suppression du serveur
-			AppConfig.RsyncServers = append(AppConfig.RsyncServers[:i], AppConfig.RsyncServers[i+1:]...)
-			if err := SaveConfig(AppConfig); err != nil {
-				LogError("Impossible de supprimer le serveur rsync '%s': %v", name, err)
-				return err
-			}
-			LogSecurity("Serveur rsync '%s' supprimé de la configuration.", name)
-			return nil
-		}
+	if err := DeleteConfigItem(&AppConfig.RsyncServers, name, "Name"); err != nil {
+		LogError("Impossible de supprimer le serveur rsync '%s': %v", name, err)
+		return err
 	}
-	LogError("Serveur rsync '%s' non trouvé pour suppression.", name)
-	return fmt.Errorf("serveur rsync '%s' non trouvé", name)
+
+	if err := SaveConfig(AppConfig); err != nil {
+		LogError("Impossible de supprimer le serveur rsync '%s': %v", name, err)
+		return err
+	}
+	LogSecurity("Serveur rsync '%s' supprimé de la configuration.", name)
+	return nil
 }
 
 // ensureConfigLoaded vérifie si la configuration est chargée et la charge si nécessaire
@@ -555,5 +541,77 @@ func (c *Config) ValidateConfig() error {
 	}
 	LogInfo("Configuration validée avec succès.")
 	return nil
+}
+
+// AddConfigItem ajoute un élément à une slice de configuration de manière générique.
+// slicePtr doit être un pointeur vers une slice (ex: *[]BackupConfig).
+// item doit être l'élément à ajouter.
+// nameField est le nom du champ de l'élément qui contient le nom unique (ex: "Name").
+func AddConfigItem(slicePtr interface{}, item interface{}, nameField string) error {
+	sliceVal := reflect.ValueOf(slicePtr).Elem()
+	itemVal := reflect.ValueOf(item)
+
+	// Vérifier si l'élément existe déjà par son nom
+	itemName := itemVal.FieldByName(nameField).String()
+	for i := 0; i < sliceVal.Len(); i++ {
+		if sliceVal.Index(i).FieldByName(nameField).String() == itemName {
+			// Mettre à jour l'élément existant
+			sliceVal.Index(i).Set(itemVal)
+			return nil // Succès de la mise à jour
+		}
+	}
+
+	// Ajouter le nouvel élément
+	sliceVal.Set(reflect.Append(sliceVal, itemVal))
+	return nil
+}
+
+// UpdateConfigItem met à jour un élément dans une slice de configuration de manière générique.
+// slicePtr doit être un pointeur vers une slice.
+// oldItemName est le nom de l'élément à mettre à jour.
+// newItem est le nouvel élément.
+// nameField est le nom du champ de l'élément qui contient le nom unique.
+func UpdateConfigItem(slicePtr interface{}, oldItemName string, newItem interface{}, nameField string) error {
+	sliceVal := reflect.ValueOf(slicePtr).Elem()
+	newItemVal := reflect.ValueOf(newItem)
+
+	for i := 0; i < sliceVal.Len(); i++ {
+		if sliceVal.Index(i).FieldByName(nameField).String() == oldItemName {
+			sliceVal.Index(i).Set(newItemVal)
+			return nil
+		}
+	}
+	return fmt.Errorf("élément '%s' non trouvé pour mise à jour", oldItemName)
+}
+
+// DeleteConfigItem supprime un élément d'une slice de configuration de manière générique.
+// slicePtr doit être un pointeur vers une slice.
+// itemName est le nom de l'élément à supprimer.
+// nameField est le nom du champ de l'élément qui contient le nom unique.
+func DeleteConfigItem(slicePtr interface{}, itemName string, nameField string) error {
+	sliceVal := reflect.ValueOf(slicePtr).Elem()
+
+	for i := 0; i < sliceVal.Len(); i++ {
+		if sliceVal.Index(i).FieldByName(nameField).String() == itemName {
+			sliceVal.Set(reflect.AppendSlice(sliceVal.Slice(0, i), sliceVal.Slice(i+1, sliceVal.Len())))
+			return nil
+		}
+	}
+	return fmt.Errorf("élément '%s' non trouvé pour suppression", itemName)
+}
+
+// GetConfigItem récupère un élément d'une slice de configuration de manière générique.
+// slicePtr doit être un pointeur vers une slice.
+// itemName est le nom de l'élément à récupérer.
+// nameField est le nom du champ de l'élément qui contient le nom unique.
+func GetConfigItem(slicePtr interface{}, itemName string, nameField string) (interface{}, bool) {
+	sliceVal := reflect.ValueOf(slicePtr).Elem()
+
+	for i := 0; i < sliceVal.Len(); i++ {
+		if sliceVal.Index(i).FieldByName(nameField).String() == itemName {
+			return sliceVal.Index(i).Interface(), true
+		}
+	}
+	return nil, false
 }
 

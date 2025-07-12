@@ -24,7 +24,7 @@ func RunInteractiveMode() {
 	// SECURITY: Vérifier si l'application est exécutée en tant que root.
 	if os.Geteuid() == 0 {
 		common.LogSecurity("AVERTISSEMENT: Application exécutée en tant que root.")
-		fmt.Printf("%s%sAVERTISSEMENT: Vous exécutez cette application en tant que root. Il est fortement recommandé d'utiliser un utilisateur avec des privilèges moindres pour des raisons de sécurité.\n\n", display.ColorBold(), display.ColorYellow(), display.ColorReset())
+		input.DisplayMessage(true, "AVERTISSEMENT: Vous exécutez cette application en tant que root. Il est fortement recommandé d'utiliser un utilisateur avec des privilèges moindres pour des raisons de sécurité.")
 	}
 
 	for {
@@ -85,8 +85,7 @@ func HandleManageCommand(args []string) {
 		}
 		backupID := args[1]
 		if !common.IsValidName(backupID) { // Utilisation de common.IsValidName
-			common.LogError("ID de sauvegarde invalide fourni pour manage delete: %s", backupID)
-			fmt.Fprintf(os.Stderr, "Erreur: ID de sauvegarde invalide: %s\n", backupID)
+			input.DisplayMessage(true, "ID de sauvegarde invalide: %s", backupID)
 			os.Exit(1)
 	}
 		backup.DeleteBackup(backupID)
@@ -108,8 +107,7 @@ func HandleDiscoverCommand(args []string) {
 	if len(args) > 0 {
 		subnetCIDR = args[0]
 		if !common.IsValidSubnet(subnetCIDR) {
-			common.LogError("Format CIDR invalide fourni pour discover: %s", subnetCIDR)
-			fmt.Fprintf(os.Stderr, "Erreur: Format CIDR invalide (ex: 192.168.0.0/24): %s\n", subnetCIDR)
+			input.DisplayMessage(true, "Format CIDR invalide (ex: 192.168.0.0/24): %s", subnetCIDR)
 			os.Exit(1)
 		}
 	} else {

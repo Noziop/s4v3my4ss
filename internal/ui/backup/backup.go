@@ -48,16 +48,13 @@ func ListBackups() {
 	common.LogInfo("Liste des sauvegardes demandée.")
 	backups, err := common.ListBackups()
 	if err != nil {
-		common.LogError("Erreur lors de la récupération de la liste des sauvegardes: %v", err)
-		fmt.Printf("%sErreur lors de la récupération des sauvegardes: %v%s\n", display.ColorRed, err, display.ColorReset)
+		input.DisplayMessage(true, "Erreur lors de la récupération de la liste des sauvegardes: %v", err)
 		return
 	}
 
 	if len(backups) == 0 {
-		common.LogInfo("Aucune sauvegarde disponible à lister.")
-		fmt.Printf("%sAucune sauvegarde disponible.%s\n", display.ColorYellow, display.ColorReset)
-		return
-	}
+		input.DisplayMessage(false, "Aucune sauvegarde disponible.")
+		return	}
 
 	fmt.Printf("%-20s %-30s %-20s %-10s %-8s\n", "NOM", "CHEMIN SOURCE", "DATE", "TAILLE", "TYPE")
 	fmt.Println(strings.Repeat("-", 100))
@@ -88,14 +85,12 @@ func DeleteBackupInteractive() {
 	common.LogInfo("Début de la suppression interactive de sauvegarde.")
 	backups, err := common.ListBackups()
 	if err != nil {
-		common.LogError("Erreur lors de la récupération des sauvegardes pour suppression: %v", err)
-		fmt.Printf("%sErreur lors de la récupération des sauvegardes: %v%s\n", display.ColorRed(), err, display.ColorReset())
+		input.DisplayMessage(true, "Erreur lors de la récupération des sauvegardes pour suppression: %v", err)
 		return
 	}
 
 	if len(backups) == 0 {
-		common.LogWarning("Aucune sauvegarde disponible à supprimer.")
-		fmt.Printf("%sAucune sauvegarde disponible.%s\n", display.ColorYellow(), display.ColorReset())
+		input.DisplayMessage(false, "Aucune sauvegarde disponible à supprimer.")
 		return
 	}
 
@@ -108,19 +103,17 @@ func DeleteBackupInteractive() {
 	idxStr := input.ReadInput("Sélectionnez une sauvegarde à supprimer (numéro): ")
 	idx, err := strconv.Atoi(idxStr)
 	if err != nil || idx < 1 || idx > len(backups) {
-		common.LogError("Choix de sauvegarde invalide pour suppression: %s", idxStr)
-		fmt.Printf("%sChoix invalide.%s\n", display.ColorRed(), display.ColorReset())
+		input.DisplayMessage(true, "Choix invalide.")
 		return
 	}
 
 	backup := backups[idx-1]
 
-	confirmStr := input.ReadInput(fmt.Sprintf("Êtes-vous sûr de vouloir supprimer '%s'? (o/n): ", backup.Name))
-	if strings.ToLower(confirmStr) != "o" {
-		common.LogInfo("Suppression annulée par l'utilisateur pour la sauvegarde: %s.", backup.Name)
-		fmt.Println("Suppression annulée.")
-		return
-	}
+	if !input.ConfirmAction(fmt.Sprintf("Êtes-vous sûr de vouloir supprimer '%s'?", backup.Name)) {
+			common.LogInfo("Suppression annulée par l'utilisateur pour la sauvegarde: %s.", backup.Name)
+			fmt.Println("Suppression annulée.")
+			return
+		}
 
 	DeleteBackup(backup.ID)
 	common.LogInfo("Demande de suppression de la sauvegarde %s.", backup.ID)
@@ -133,13 +126,11 @@ func DeleteBackup(id string) {
 
 	err := common.DeleteBackup(id)
 	if err != nil {
-		common.LogError("Erreur lors de la suppression de la sauvegarde %s: %v", id, err)
-		fmt.Printf("%sErreur lors de la suppression: %v%s\n", display.ColorRed, err, display.ColorReset)
+		input.DisplayMessage(true, "Erreur lors de la suppression: %v", err)
 		return
 	}
 
-	common.LogInfo("Sauvegarde %s supprimée avec succès.", id)
-	fmt.Printf("%sSuppression terminée avec succès.%s\n", display.ColorGreen(), display.ColorReset())
+	input.DisplayMessage(false, "Suppression terminée avec succès.")
 }
 
 // cleanOldBackups nettoie les anciennes sauvegardes selon la politique de rétention
@@ -149,5 +140,5 @@ func cleanOldBackups() {
 	// TODO: Implémenter la logique de nettoyage des anciennes sauvegardes ici.
 	// Cette fonctionnalité est un placeholder et doit être développée ultérieurement.
 	common.LogInfo("Nettoyage des anciennes sauvegardes terminé.")
-	fmt.Printf("%sNettoyage terminé.%s\n", display.ColorGreen, display.ColorReset)
+	input.DisplayMessage(false, "Nettoyage terminé.")
 }

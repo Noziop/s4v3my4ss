@@ -42,7 +42,7 @@ func ConfigureBackup() {
 	sourcePath = filepath.Clean(sourcePath)
 	if !common.DirExists(sourcePath) {
 		common.LogError("Répertoire source '%s' n'existe pas.", sourcePath)
-		fmt.Printf("%sErreur: Le répertoire '%s' n'existe pas.%s\n", display.ColorRed, sourcePath, display.ColorReset)
+		input.DisplayMessage(true, "Le répertoire '%s' n'existe pas.", sourcePath)
 		return
 	}
 
@@ -158,9 +158,9 @@ func ConfigureBackup() {
 			}
 			
 			if err := common.AddBackupDestination(newDest); err != nil {
-				common.LogError("Erreur lors de l'ajout de la destination %s: %v", newDest.Name, err)
-				return
-			}
+					input.DisplayMessage(true, "Erreur lors de l'ajout de la destination %s: %v", newDest.Name, err)
+					return
+				}
 			
 			backupDestinationName = newDestName
 		} else {
@@ -188,10 +188,11 @@ func ConfigureBackup() {
 		for i, dir := range excludeDirs {
 			excludeDirs[i] = strings.TrimSpace(dir)
 			if !common.IsValidExcludePattern(excludeDirs[i]) { // Utilisation de common.IsValidExcludePattern
-				common.LogError("Modèle d'exclusion de répertoire invalide: %s", excludeDirs[i])
-				fmt.Printf("%sModèle d'exclusion de répertoire invalide: %s%s\n", display.ColorRed, excludeDirs[i], display.ColorReset)
-				return
-			}
+									common.LogError("Modèle d'exclusion de répertoire invalide: %s", excludeDirs[i])
+					input.DisplayMessage(true, "Modèle d'exclusion de répertoire invalide: %s", excludeDirs[i])
+					return
+				}
+
 		}
 	} else {
 		excludeDirs = commonExcludeDirs
@@ -206,9 +207,9 @@ func ConfigureBackup() {
 			excludeFiles[i] = strings.TrimSpace(file)
 			if !common.IsValidExcludePattern(excludeFiles[i]) { // Utilisation de common.IsValidExcludePattern
 				common.LogError("Modèle d'exclusion de fichier invalide: %s", excludeFiles[i])
-				fmt.Printf("%sModèle d'exclusion de fichier invalide: %s%s\n", display.ColorRed, excludeFiles[i], display.ColorReset)
-				return
-			}
+					input.DisplayMessage(true, "Modèle d'exclusion de fichier invalide: %s", excludeFiles[i])
+					return
+				}
 		}
 	} else {
 		excludeFiles = commonExcludeFiles
@@ -237,13 +238,11 @@ func ConfigureBackup() {
 	
 	// Ajouter à la configuration
 	if err := common.AddBackupDirectory(config); err != nil {
-		common.LogError("Erreur lors de l'ajout de la configuration de sauvegarde %s: %v", config.Name, err)
-		fmt.Printf("%sErreur lors de l'ajout de la configuration: %v%s\n", display.ColorRed(), err, display.ColorReset())
+		input.DisplayMessage(true, "Erreur lors de l'ajout de la configuration: %v", err)
 		return
 	}
-	
-	common.LogInfo("Configuration de sauvegarde %s ajoutée avec succès.", config.Name)
-	fmt.Printf("%sConfiguration ajoutée avec succès.%s\n", display.ColorGreen(), display.ColorReset())
+
+	input.DisplayMessage(false, "Configuration ajoutée avec succès.")
 	
 	// Proposer de démarrer la surveillance
 	startWatchStr := input.ReadInput("Démarrer la surveillance maintenant? (o/n): ")
@@ -257,7 +256,7 @@ func ConfigureBackup() {
 		go func() {
 			if err := watch.StartWatch(config); err != nil {
 				common.LogError("Erreur lors de la surveillance en arrière-plan pour %s: %v", config.Name, err)
-				fmt.Printf("%sErreur lors de la surveillance: %v%s\n", display.ColorRed(), err, display.ColorReset())
+				input.DisplayMessage(true, "Erreur lors de la surveillance: %v", err)
 			}
 		}()
 	}

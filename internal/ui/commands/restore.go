@@ -20,14 +20,12 @@ func RestoreBackupInteractive(isCLI bool) {
 
 	backups, err := common.ListBackups()
 	if err != nil {
-		common.LogError("Erreur lors de la récupération des sauvegardes pour restauration: %v", err)
-		fmt.Printf("%sErreur lors de la récupération des sauvegardes: %v%s\n", display.ColorRed(), err, display.ColorReset())
+		input.DisplayMessage(true, "Erreur lors de la récupération des sauvegardes pour restauration: %v", err)
 		return
 	}
 
 	if len(backups) == 0 {
-		common.LogWarning("Aucune sauvegarde disponible pour la restauration.")
-		fmt.Printf("%sAucune sauvegarde disponible.%s\n", display.ColorYellow(), display.ColorReset())
+		input.DisplayMessage(false, "Aucune sauvegarde disponible pour la restauration.")
 		return
 	}
 
@@ -40,8 +38,7 @@ func RestoreBackupInteractive(isCLI bool) {
 	idxStr := input.ReadInput("Sélectionnez une sauvegarde (numéro): ")
 	idx, err := strconv.Atoi(idxStr)
 	if err != nil || idx < 1 || idx > len(backups) {
-		common.LogError("Choix de sauvegarde invalide pour la restauration: %s", idxStr)
-		fmt.Printf("%sChoix invalide.%s\n", display.ColorRed, display.ColorReset)
+		input.DisplayMessage(true, "Choix invalide.")
 		return
 	}
 
@@ -55,7 +52,7 @@ func RestoreBackupInteractive(isCLI bool) {
 	// SECURITY: Vérifier si le chemin de destination est autorisé
 	if !common.AppConfig.Security.IsPathAllowed(targetPath) {
 		common.LogSecurity("Tentative de restauration vers un chemin non autorisé: %s", targetPath)
-		fmt.Printf("%sErreur: Le chemin de destination '%s' n'est pas autorisé dans la configuration de sécurité.%s\n", display.ColorRed, targetPath, display.ColorReset)
+		input.DisplayMessage(true, "Le chemin de destination '%s' n'est pas autorisé dans la configuration de sécurité.", targetPath)
 		return
 	}
 
@@ -74,11 +71,9 @@ func RestoreBackupInteractive(isCLI bool) {
 	fmt.Printf("Restauration de la sauvegarde '%s' vers '%s'...\n", backup.Name, targetPath)
 
 	if err := restore.RestoreBackup(backup.ID, targetPath); err != nil {
-		common.LogError("Erreur lors de la restauration de %s: %v", backup.Name, err)
-		fmt.Printf("%sErreur lors de la restauration: %v%s\n", display.ColorRed, err, display.ColorReset)
+		input.DisplayMessage(true, "Erreur lors de la restauration: %v", err)
 		return
 	}
 
-	common.LogInfo("Restauration terminée avec succès pour %s.", backup.Name)
-	fmt.Printf("%sRestauration terminée avec succès.%s\n", display.ColorGreen(), display.ColorReset())
+	input.DisplayMessage(false, "Restauration terminée avec succès.")
 }
